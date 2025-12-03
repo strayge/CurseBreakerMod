@@ -21,7 +21,8 @@ from .Tukui import TukuiAddon
 from .GitHub import GitHubAddon, GitHubAddonRaw
 from .WagoAddons import WagoAddonsAddon
 from .WoWInterface import WoWInterfaceAddon
-from .CurseForge import CurseForgeAddon, CF_API_KEY
+from .CurseForge import (CurseForgeAddon, CF_API_KEY,
+                         detect_curseforge_addons, scan_directory_fingerprints)
 
 
 class Core:
@@ -643,39 +644,71 @@ class Core:
 
     # TODO: Refactor to be smarter
     def detect_addons(self):
-        if self.config['WAAAPIKey'] == '':
-            raise RuntimeError('This feature only matches addons that are in the database of the Wago Addons. Other sou'
-                               'rces don\'t provide means to make a reasonable match. So Wago Addons API key is require'
-                               'd. This application still can be used without it. Already installed addons can be added'
-                               ' to CurseBreaker with the install command.\n'
-                               'API key can be obtained here: https://addons.wago.io/patreon')
         names = []
         namesinstalled = []
         slugs = []
-        output = []
         ignored = ['ElvUI_OptionsUI', 'ElvUI_Options', 'ElvUI_Libraries', 'Tukui_Config', '+Wowhead_Looter',
                    'WeakAurasCompanion', 'CurseBreakerCompanion', 'SharedMedia_MyMedia', 'TradeSkillMaster_AppHelper',
-                   'WagoAnalytics', 'WagoAppCompanion', 'Details_Streamer', 'Details_Vanguard', '.DS_Store', '.git']
+                   'WagoAnalytics', 'WagoAppCompanion', '.DS_Store', '.git']
         specialcases = ['ElvUI', 'Tukui']
 
-        addon_dirs = os.listdir(self.path)
-        for directory in addon_dirs:
+        # Collect directories to scan
+        addon_dirs = []
+        for directory in os.listdir(self.path):
             if os.path.isdir(self.path / directory) and not os.path.islink(self.path / directory) and \
                     not os.path.isdir(self.path / directory / '.git') and not directory.startswith('Blizzard_') and \
                     directory not in ignored + specialcases:
-                directoryhash = WagoAddonsHasher(self.path / directory)
-                output.append({'name': directory, 'hash': directoryhash.get_hash()})
+                addon_dirs.append(directory)
 
-        payload = self.http.post(f'https://addons.wago.io/api/external/addons/_match?game_version={self.clientType}',
-                                 json={'addons': output}, auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-        self.parse_wagoaddons_error(payload.status_code)
-        payload = payload.json()
-        for addon in payload['addons']:
-            if self.check_if_installed(addon['website_url']):
-                namesinstalled.append(addon['name'])
-            else:
-                names.append(addon['name'])
-                slugs.append(f'wa:{addon["website_url"].split("/")[-1]}')
+        # Scan directories for fingerprints in parallel
+        from rich.progress import Progress, BarColumn
+        folder_fingerprints = {}  # {directory: fingerprint}
+
+        with Progress('{task.completed}/{task.total}', '|', BarColumn(bar_width=None), '|',
+                      auto_refresh=False) as progress:
+            task = progress.add_task('', total=len(addon_dirs), completed=0)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                workers = []
+                for directory in addon_dirs:
+                    workers.append(executor.submit(scan_directory_fingerprints, self.path, directory))
+                for future in concurrent.futures.as_completed(workers):
+                    directory, folder_fingerprint = future.result()
+                    if folder_fingerprint is not None:
+                        folder_fingerprints[directory] = folder_fingerprint
+                    progress.update(task, advance=1, refresh=True)
+
+        # Call CurseForge fingerprint detection
+        cf_names, cf_slugs, cf_namesinstalled, cf_matched_dirs = detect_curseforge_addons(
+            self.http, folder_fingerprints, self.check_if_installed_dirs
+        )
+
+        names.extend(cf_names)
+        slugs.extend(cf_slugs)
+        namesinstalled.extend(cf_namesinstalled)
+
+        # Optionally call WagoAddons API if key is provided
+        if self.config['WAAAPIKey'] != '':
+            wago_output = []
+            for directory in addon_dirs:
+                # Skip directories already matched by CurseForge
+                if directory not in cf_matched_dirs:
+                    directoryhash = WagoAddonsHasher(self.path / directory)
+                    wago_output.append({'name': directory, 'hash': directoryhash.get_hash()})
+
+            if wago_output:
+                payload = self.http.post(f'https://addons.wago.io/api/external/addons/_match?game_version={self.clientType}',
+                                        json={'addons': wago_output},
+                                        auth=APIAuth('Bearer', self.config['WAAAPIKey']))
+                self.parse_wagoaddons_error(payload.status_code)
+                payload = payload.json()
+                for addon in payload['addons']:
+                    if self.check_if_installed(addon['website_url']):
+                        namesinstalled.append(addon['name'])
+                    else:
+                        names.append(addon['name'])
+                        slugs.append(f'wa:{addon["website_url"].split("/")[-1]}')
+
+        # Handle special cases
         for special in specialcases:
             if os.path.isdir(self.path / special):
                 if self.check_if_installed(special):
@@ -683,6 +716,7 @@ class Core:
                 else:
                     names.append(special)
                     slugs.append(special)
+
         names.sort()
         namesinstalled.sort()
         slugs.sort()

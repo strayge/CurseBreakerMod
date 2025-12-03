@@ -944,8 +944,7 @@ class TUI:
             self.console.print('\n[yellow]Already installed addons:[/yellow]')
             for addon in installed:
                 self.console.print(addon, highlight=False)
-            self.console.print('\n[bold]This process detects only addons available on Wago Addons and ElvUI/Tukui.[/bol'
-                               'd]\nExecute [bold white]import install[/bold white] command to install all new detected'
+            self.console.print('\nExecute [bold white]import install[/bold white] command to install all new detected'
                                ' addons.\nAfter installation run the [bold white]orphans[/bold white] command and [bold'
                                ' white]install[/bold white] missing addons.')
 
