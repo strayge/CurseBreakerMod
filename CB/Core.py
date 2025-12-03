@@ -21,6 +21,7 @@ from .Tukui import TukuiAddon
 from .GitHub import GitHubAddon, GitHubAddonRaw
 from .WagoAddons import WagoAddonsAddon
 from .WoWInterface import WoWInterfaceAddon
+from .CurseForge import CurseForgeAddon, CF_API_KEY
 
 
 class Core:
@@ -40,6 +41,7 @@ class Core:
         self.wagoIdCache = None
         self.tukuiCache = None
         self.checksumCache = {}
+        self.cfCache = {}
 
     def init_master_config(self):
         try:
@@ -232,7 +234,9 @@ class Core:
         elif url.startswith('https://www.townlong-yak.com/addons/'):
             raise RuntimeError(f'{url}\nTownlong Yak is no longer supported by this application.')
         elif url.startswith('https://www.curseforge.com/wow/addons/'):
-            raise RuntimeError(f'{url}\nCurseForge is no longer supported by this application.')
+            return CurseForgeAddon(url, self.cfCache,
+                                   'retail' if url in self.config['IgnoreClientVersion'].keys() else self.clientType,
+                                   self.check_if_dev(url), self.http)
         elif url.startswith('https://www.tukui.org/'):
             raise RuntimeError(f'{url}\nTukui.org is no longer supported by this application.')
         else:
@@ -243,6 +247,8 @@ class Core:
             return 'Wago', url
         elif url.startswith('https://www.wowinterface.com/downloads/'):
             return 'WoWI', url
+        elif url.startswith('https://www.curseforge.com/wow/addons/'):
+            return 'CF', url
         elif url.startswith('https://github.com/'):
             return 'GitHub', url
         elif url.lower().endswith(':dev'):
@@ -285,6 +291,8 @@ class Core:
             url = f'https://www.wowinterface.com/downloads/info{url[5:]}.html'
         elif url.startswith('gh:'):
             url = f'https://github.com/{url[3:]}'
+        elif url.startswith('cf:'):
+            url = f'https://www.curseforge.com/wow/addons/{url[3:]}'
         if url.endswith('/'):
             url = url[:-1]
         if addon := self.check_if_installed(url):
@@ -311,7 +319,6 @@ class Core:
         oldversion = old['Version']
         modified = self.checksumCache[old['URL']] if old['URL'] in self.checksumCache else self.check_checksum(old)[1]
         if old['URL'].startswith(('https://www.townlong-yak.com/addons/',
-                                  'https://www.curseforge.com/wow/addons/',
                                   'https://www.tukui.org/')):
             return old['Name'], [], oldversion, oldversion, None, modified, blocked, 'Unsupported', old['URL'], \
                        None, dev
@@ -358,7 +365,8 @@ class Core:
         if url == 'global':
             state = self.check_if_dev_global()
             for addon in self.config['Addons']:
-                if addon['URL'].startswith('https://addons.wago.io/addons/'):
+                if addon['URL'].startswith('https://addons.wago.io/addons/') or \
+                   addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
                     if state == 0:
                         addon['Development'] = 1
                     elif state == 1:
@@ -369,7 +377,8 @@ class Core:
             return state
         else:
             if addon := self.check_if_installed(url):
-                if addon['URL'].startswith('https://addons.wago.io/addons/'):
+                if addon['URL'].startswith('https://addons.wago.io/addons/') or \
+                   addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
                     state = self.check_if_dev(url)
                     if state == 0:
                         addon['Development'] = 1
@@ -508,18 +517,24 @@ class Core:
         ids_wowi = []
         ids_wago = []
         ids_gh = []
+        ids_cf = []
         for addon in addons:
             if addon['URL'].startswith('https://www.wowinterface.com/downloads/'):
                 ids_wowi.append(re.findall(r'\d+', addon['URL'])[0].strip())
             elif addon['URL'].startswith('https://addons.wago.io/addons/') and \
                     addon['URL'] not in self.config['IgnoreClientVersion'].keys():
                 ids_wago.append({'slug': addon['URL'].replace('https://addons.wago.io/addons/', ''), 'id': ''})
+            elif addon['URL'].startswith('https://www.curseforge.com/wow/addons/') and \
+                    addon['URL'] not in self.config['IgnoreClientVersion'].keys():
+                ids_cf.append({'slug': addon['URL'].split('/')[-1], 'id': 0})
             elif addon['URL'].startswith('https://github.com/'):
                 ids_gh.append(addon['URL'].replace('https://github.com/', ''))
         if ids_wowi:
             self.bulk_wowi_check(ids_wowi)
         if ids_wago and self.config['WAAAPIKey'] != '':
             self.bulk_wago_check(ids_wago)
+        if ids_cf:
+            self.bulk_cf_check(ids_cf)
         if ids_gh and self.config['GHAPIKey'] != '':
             self.bulk_gh_check(ids_gh)
 
@@ -549,6 +564,26 @@ class Core:
                 if addon['id'] == addonid:
                     self.wagoCache[addon['slug']] = payload['addons'][addonid]
                     break
+
+    def bulk_cf_check(self, ids):
+        mod_ids = [addon['id'] for addon in ids if addon['id'] != 0]
+        if not mod_ids:
+            return
+        try:
+            payload = self.http.post('https://api.curseforge.com/v1/mods',
+                                    json={'modIds': mod_ids},
+                                    headers={'x-api-key': CF_API_KEY},
+                                    timeout=15)
+        except httpx.RequestError:
+            return
+        if payload.status_code != 200:
+            return
+        try:
+            data = payload.json()['data']
+            for mod in data:
+                self.cfCache[mod['slug']] = mod
+        except (KeyError, TypeError):
+            pass
 
     def bulk_gh_check_worker(self, node_id, url):
         return node_id, self.http.get(url, headers={'Accept': 'application/octet-stream'},
@@ -661,6 +696,8 @@ class Core:
                 url = f'wa:{addon["URL"].replace("https://addons.wago.io/addons/", "")}'
             elif addon['URL'].startswith('https://www.wowinterface.com/downloads/info'):
                 url = f'wowi:{addon["URL"].split("/info")[-1].replace(".html", "")}'
+            elif addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
+                url = f'cf:{addon["URL"].split("/")[-1]}'
             elif addon['URL'].startswith('https://github.com/'):
                 url = f'gh:{addon["URL"].replace("https://github.com/", "")}'
             else:
