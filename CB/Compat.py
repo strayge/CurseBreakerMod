@@ -32,7 +32,7 @@ class KBHit:
     def kbhit(self):
         if system == 'Windows':
             return msvcrt.kbhit()
-        dr, dw, de = select([sys.stdin], [], [], 0)
+        dr, _dw, _de = select([sys.stdin], [], [], 0)
         return dr != []
 
 
