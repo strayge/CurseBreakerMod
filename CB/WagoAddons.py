@@ -13,6 +13,31 @@ from json import JSONDecodeError
 from . import retry, APIAuth
 
 
+def parse_wagoaddons_error(code: int) -> None:
+    """Parse WagoAddons API error codes and raise appropriate exceptions."""
+    if code == 401:
+        raise RuntimeError('Wago Addons API key is missing or incorrect.')
+    elif code == 403:
+        raise RuntimeError('Provided Wago Addons API key is expired. Please acquire a new one.')
+    elif code == 423:
+        raise RuntimeError('Provided Wago Addons API key is blocked. Please acquire a new one.')
+    elif code in [429, 500, 502, 504]:
+        raise RuntimeError('Temporary Wago Addons API issue. Please try later.')
+
+
+def parse_wagoapp_payload(url: str, client_type: str | None, api_key: str, http: httpx.Client) -> str:
+    """Parse wago-app:// protocol URLs and convert them to regular Wago Addons URLs."""
+    if api_key == '':
+        raise RuntimeError('This feature requires the Wago Addons API key.\n'
+                           'It can be obtained here: https://addons.wago.io/patreon')
+    projectid = url.replace('wago-app://addons/', '')
+    payload = http.get(f'https://addons.wago.io/api/external/addons/{projectid}?game_version='
+                       f'{client_type}', auth=APIAuth('Bearer', api_key))
+    parse_wagoaddons_error(payload.status_code)
+    payload = payload.json()
+    return f'https://addons.wago.io/addons/{payload["slug"]}'
+
+
 class WagoAddonsAddon:
     @retry()
     def __init__(

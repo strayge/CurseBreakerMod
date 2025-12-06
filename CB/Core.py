@@ -19,7 +19,7 @@ from typing import Any
 from . import retry, APIAuth, __version__
 from .Tukui import TukuiAddon
 from .GitHub import GitHubAddon, GitHubAddonRaw
-from .WagoAddons import WagoAddonsAddon, WagoAddonsHasher
+from .WagoAddons import WagoAddonsAddon, WagoAddonsHasher, parse_wagoaddons_error, parse_wagoapp_payload
 from .WoWInterface import WoWInterfaceAddon
 from .CurseForge import (CurseForgeAddon, CF_API_KEY,
                          detect_curseforge_addons, scan_directory_fingerprints)
@@ -340,7 +340,7 @@ class Core:
         if url.endswith(':'):
             raise NotImplementedError('Provided URL is not supported.')
         elif 'wago-app://' in url:
-            url = self.parse_wagoapp_payload(url)
+            url = parse_wagoapp_payload(url, self.clientType, self.config['WAAAPIKey'], self.http)
         elif url.startswith('wa:'):
             url = f'https://addons.wago.io/addons/{url[3:]}'
         elif url.startswith('wowi:'):
@@ -564,7 +564,7 @@ class Core:
                                'It can be obtained here: https://addons.wago.io/patreon')
         payload = self.http.get(f'https://addons.wago.io/api/external/addons/_search?query={quote_plus(query.strip())}&'
                                 f'game_version={self.clientType}', auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-        self.parse_wagoaddons_error(payload.status_code)
+        parse_wagoaddons_error(payload.status_code)
         payload = payload.json()
         return [result['website_url'] for result in payload['data']]
 
@@ -589,17 +589,6 @@ class Core:
                           '[HKEY_CURRENT_USER\\Software\\Classes\\weakauras-companion\\shell\\open]\n'
                           '[HKEY_CURRENT_USER\\Software\\Classes\\weakauras-companion\\shell\\open\\command]\n'
                           '@="\\"' + os.path.abspath(sys.executable).replace('\\', '\\\\') + '\\" \\"%1\\""')
-
-    def parse_wagoapp_payload(self, url: str) -> str:
-        if self.config['WAAAPIKey'] == '':
-            raise RuntimeError('This feature requires the Wago Addons API key.\n'
-                               'It can be obtained here: https://addons.wago.io/patreon')
-        projectid = url.replace('wago-app://addons/', '')
-        payload = self.http.get(f'https://addons.wago.io/api/external/addons/{projectid}?game_version='
-                                f'{self.clientType}', auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-        self.parse_wagoaddons_error(payload.status_code)
-        payload = payload.json()
-        return f'https://addons.wago.io/addons/{payload["slug"]}'
 
     def bulk_check(self, addons: list[dict[str, Any]]) -> None:
         ids_wowi = []
@@ -637,7 +626,7 @@ class Core:
         if not self.wagoIdCache:
             response = self.http.get(f'https://addons.wago.io/api/data/slugs?game_version={self.clientType}',
                                              timeout=15)
-            self.parse_wagoaddons_error(response.status_code)
+            parse_wagoaddons_error(response.status_code)
             self.wagoIdCache = response.json()
         for addon in ids:
             if addon['slug'] in self.wagoIdCache['addons']:
@@ -645,7 +634,7 @@ class Core:
         payload = self.http.post(f'https://addons.wago.io/api/external/addons/_recents?game_version={self.clientType}',
                                  json={'addons': [addon["id"] for addon in ids if addon["id"] != ""]},
                                  auth=APIAuth('Bearer', self.config['WAAAPIKey']), timeout=15)
-        self.parse_wagoaddons_error(payload.status_code)
+        parse_wagoaddons_error(payload.status_code)
         payload = payload.json()
         for addonid in payload['addons']:
             for addon in ids:
@@ -786,7 +775,7 @@ class Core:
                 payload = self.http.post(f'https://addons.wago.io/api/external/addons/_match?game_version={self.clientType}',
                                         json={'addons': wago_output},
                                         auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-                self.parse_wagoaddons_error(payload.status_code)
+                parse_wagoaddons_error(payload.status_code)
                 payload = payload.json()
                 for addon in payload['addons']:
                     if self.check_if_installed(addon['website_url']):
@@ -825,13 +814,3 @@ class Core:
                 url = addon['URL'].lower()
             addons.append(url)
         return f'install {",".join(sorted(addons))}'
-
-    def parse_wagoaddons_error(self, code: int) -> None:
-        if code == 401:
-            raise RuntimeError('Wago Addons API key is missing or incorrect.')
-        elif code == 403:
-            raise RuntimeError('Provided Wago Addons API key is expired. Please acquire a new one.')
-        elif code == 423:
-            raise RuntimeError('Provided Wago Addons API key is blocked. Please acquire a new one.')
-        elif code in [429, 500, 502, 504]:
-            raise RuntimeError('Temporary Wago Addons API issue. Please try later.')
