@@ -252,7 +252,11 @@ class TUI:
         sys.exit(0)
 
     def auto_update(self) -> None:
-        if not getattr(sys, 'frozen', False) or 'CURSEBREAKER_VARDEXMODE' in os.environ:
+        if (
+            not getattr(sys, 'frozen', False)
+            or 'CURSEBREAKER_VARDEXMODE' in os.environ
+            or 'CURSEBREAKER_OFFLINE' in os.environ
+        ):
             return
         try:
             if os.path.isfile(f'{sys.executable}.old'):
@@ -287,6 +291,8 @@ class TUI:
                                      'recommended. https://aka.ms/terminal', title='WARNING', border_style='red'))
             self.console.print('')
         else:
+            if 'CURSEBREAKER_OFFLINE' in os.environ:
+                return
             payload = self.core.http.get('https://cursebreaker.acidweb.dev/motd')
             if payload.status_code == 200:
                 self.console.print(Panel(payload.content.decode('UTF-8'), title=':megaphone: MOTD :megaphone:',
@@ -395,11 +401,13 @@ class TUI:
 
     def setup_completer(self) -> None:
         if not self.slugs:
-            try:
-                self.slugs = json.load(gzip.open(io.BytesIO(
-                    self.core.http.get('https://cursebreaker.acidweb.dev/slugs-v2.json.gz').content)))
-            except (StopIteration, UnicodeDecodeError, json.JSONDecodeError, httpx.RequestError):
-                self.slugs = {'wa': [], 'wowi': [], 'gh': [], 'custom': []}
+            self.slugs = {'wa': [], 'wowi': [], 'gh': [], 'custom': []}
+            if 'CURSEBREAKER_OFFLINE' not in os.environ:
+                try:
+                    self.slugs = json.load(gzip.open(io.BytesIO(
+                        self.core.http.get('https://cursebreaker.acidweb.dev/slugs-v2.json.gz').content)))
+                except (StopIteration, UnicodeDecodeError, json.JSONDecodeError, httpx.RequestError):
+                    pass
         addons = []
         for addon in sorted(self.core.config['Addons'], key=lambda k: k['Name'].lower()):
             addons.append(addon['Name'])

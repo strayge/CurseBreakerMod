@@ -51,11 +51,13 @@ class Core:
         self.mod_manager: ModManager = ModManager(self)
 
     def init_master_config(self) -> None:
+        self.masterConfig = {'CustomRepository': {}, 'ClientTypes': {}}
+        if 'CURSEBREAKER_OFFLINE' in os.environ:
+            return
         try:
             self.masterConfig = json.load(gzip.open(io.BytesIO(
                 self.http.get('https://cursebreaker.acidweb.dev/config-v2.json.gz').content)))
         except (StopIteration, UnicodeDecodeError, json.JSONDecodeError, httpx.RequestError) as e:
-            self.masterConfig = {}
             raise RuntimeError('Failed to fetch the master config file. '
                                'Check your connectivity to Google Cloud.') from e
 
