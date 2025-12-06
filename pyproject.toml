@@ -34,3 +34,5 @@ reportExplicitAny = false
 reportAny = false
 reportUnusedCallResult = false
 reportUnknownArgumentType = false
+reportImplicitOverride = false
+reportPossiblyUnboundVariable = false

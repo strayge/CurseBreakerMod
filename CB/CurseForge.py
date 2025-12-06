@@ -3,20 +3,22 @@ import io
 import re
 import httpx
 import zipfile
-from typing import Any
+import concurrent.futures
+from typing import Any, final
 from pathlib import Path
 from . import retry
-
+from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon
 
 CF_API_KEY = '$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm'
 GAME_VERSION_TYPE_MAP = {'retail': 517, 'classic': 67408, 'mop': 79434}
 
 
-class CurseForgeAddon:
-    @retry()
+@final
+class CurseForgeAddon(BaseAddon):
     def __init__(
         self, url: str, checkcache: dict[str, Any], clienttype: str, allowdev: int, http: httpx.Client
     ) -> None:
+        super().__init__()
         slug = url.split('/')[-1]
         self.http: httpx.Client = http
         self.clientType: str = clienttype
@@ -25,32 +27,29 @@ class CurseForgeAddon:
         if slug in checkcache:
             self.payload = checkcache[slug]
         else:
-            try:
-                response = self.http.get(f'https://api.curseforge.com/v1/mods/search?gameId=1&slug={slug}',
-                                        headers={'x-api-key': CF_API_KEY}, timeout=15)
-            except httpx.RequestError as e:
-                raise RuntimeError(f'{url}\nCurseForge API failed to respond.') from e
-
-            try:
-                data = response.json()['data']
-            except (StopIteration, KeyError) as e:
-                raise RuntimeError(f'{url}\nFailed to parse CurseForge API response.') from e
-
-            if not data:
-                raise RuntimeError(f'{url}\nAddon not found on CurseForge.')
-
-            self.payload = data[0]
+            self.payload = self._get_metadata(slug, url)
 
         self.name: str = self.payload['name'].strip().strip('\u200b')
         self.changelogUrl: str = self.payload['links']['websiteUrl']
         self.author: list[str] = [author['name'] for author in self.payload['authors']]
-        self.downloadUrl: str | None = None
-        self.currentVersion: str | None = None
-        self.uiVersion: str | None = None
-        self.archive: zipfile.ZipFile | None = None
-        self.directories: list[str] = []
-        self.zipContent: bytes = b''
         self.get_current_version()
+
+    @retry()
+    def _get_metadata(self, slug: str, url: str) -> dict[str, Any]:
+        try:
+            response = self.http.get(f'https://api.curseforge.com/v1/mods/search?gameId=1&slug={slug}',
+                                    headers={'x-api-key': CF_API_KEY}, timeout=15)
+        except httpx.RequestError as e:
+            raise RuntimeError(f'{url}\nCurseForge API failed to respond.') from e
+
+        try:
+            data = response.json()['data']
+        except (StopIteration, KeyError) as e:
+            raise RuntimeError(f'{url}\nFailed to parse CurseForge API response.') from e
+
+        if not data:
+            raise RuntimeError(f'{url}\nAddon not found on CurseForge.')
+        return data[0]
 
     def get_current_version(self) -> None:
         game_version_type_id = GAME_VERSION_TYPE_MAP.get(self.clientType)
@@ -99,7 +98,8 @@ class CurseForgeAddon:
             raise RuntimeError(f'{self.name}.\nProject package is corrupted or incorrectly packaged.')
 
     def install(self, path: Path) -> None:
-        self.archive.extractall(path)
+        if self.archive:
+            self.archive.extractall(path)
 
 
 class CurseForgeFingerprintScanner:
@@ -238,6 +238,7 @@ def detect_curseforge_addons(
 ) -> tuple[list[str], list[str], list[str], set[str]]:
     """
     Detect CurseForge addons using fingerprint matching.
+    DEPRECATED: Use CurseForgeProvider.scan() instead.
 
     Args:
         http: HTTP client instance
@@ -364,3 +365,143 @@ def detect_curseforge_addons(
         pass  # Continue with partial results if CurseForge API fails
 
     return names, slugs, namesinstalled, cf_matched_dirs
+
+
+@final
+class CurseForgeProvider(BaseAddonProvider):
+    """Provider for CurseForge addons."""
+
+    def __init__(self, http: httpx.Client, config: dict[str, Any], master_config: dict[str, Any]):
+        super().__init__(http, config, master_config)
+        self.name: str = "CF"
+        self.prefix: str = "cf"
+
+    def is_addon_url(self, url: str) -> bool:
+        return url.startswith('https://www.curseforge.com/wow/addons/')
+
+    def convert_url_to_id(self, url: str) -> str:
+        return url.split('/')[-1]
+
+    def convert_id_to_url(self, identifier: str) -> str:
+        return f'https://www.curseforge.com/wow/addons/{identifier}'
+
+    def create_addon(self, url: str, client_type: str, **kwargs: Any) -> BaseAddon:
+        return CurseForgeAddon(
+            url,
+            self.cache,
+            client_type,
+            kwargs.get('dev_level', 0),
+            self.http
+        )
+
+    def bulk_check(self, addon_urls: list[str], client_type: str) -> None:
+        """Bulk check for updates from CurseForge API."""
+        # Build list of mod IDs from slugs
+        ids = [{'slug': self.convert_url_to_id(url), 'id': 0} for url in addon_urls]
+
+        # Resolve slugs to mod IDs (if not already in cache)
+        for addon_data in ids:
+            if addon_data['slug'] in self.cache:
+                addon_data['id'] = self.cache[addon_data['slug']].get('id', 0)
+
+        mod_ids = [addon['id'] for addon in ids if addon['id'] != 0]
+        if not mod_ids:
+            return
+
+        try:
+            payload = self.http.post('https://api.curseforge.com/v1/mods',
+                                    json={'modIds': mod_ids},
+                                    headers={'x-api-key': CF_API_KEY},
+                                    timeout=15)
+        except httpx.RequestError:
+            return
+
+        if payload.status_code != 200:
+            return
+
+        try:
+            data = payload.json()['data']
+            for mod in data:
+                self.cache[mod['slug']] = mod
+        except (KeyError, TypeError):
+            pass
+
+    def scan(self, addon_dirs: list[str], path: Path, client_type: str) -> list[DetectedAddon]:
+        """Scan directories for CurseForge addons using fingerprint matching."""
+        detected: list[DetectedAddon] = []
+
+        # Compute fingerprints for all directories
+        folder_fingerprints: dict[str, int | None] = {}
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            workers: list[concurrent.futures.Future[tuple[str, int | None]]] = []
+            for directory in addon_dirs:
+                workers.append(executor.submit(scan_directory_fingerprints, path, directory))
+            for future in concurrent.futures.as_completed(workers):
+                directory, folder_fingerprint = future.result()
+                if folder_fingerprint is not None:
+                    folder_fingerprints[directory] = folder_fingerprint
+
+        # Call CurseForge fingerprint API
+        all_fingerprints = list(folder_fingerprints.values())
+        if not all_fingerprints:
+            return detected
+
+        try:
+            cf_payload = self.http.post('https://api.curseforge.com/v1/fingerprints/1',
+                                      json={'fingerprints': all_fingerprints},
+                                      headers={'x-api-key': CF_API_KEY},
+                                      timeout=30)
+            if cf_payload.status_code != 200:
+                return detected
+
+            cf_data = cf_payload.json()['data']
+
+            # Process exact and partial matches
+            mod_to_dirs: dict[int, set[str]] = {}  # {modId: {dir1, dir2, ...}}
+
+            for match_type in ['exactMatches', 'partialMatches']:
+                if match_type in cf_data:
+                    for match in cf_data[match_type]:
+                        # Filter for WoW addons only (gameId=1)
+                        if 'file' not in match or match['file'].get('gameId') != 1:
+                            continue
+                        mod_id = match['id']
+
+                        # Check modules in the matched file
+                        if 'modules' in match['file']:
+                            for module in match['file']['modules']:
+                                module_name = module['name']
+                                # Find directory with matching name (case-insensitive)
+                                for directory in folder_fingerprints.keys():
+                                    if directory.lower() == module_name.lower():
+                                        if mod_id not in mod_to_dirs:
+                                            mod_to_dirs[mod_id] = set()
+                                        mod_to_dirs[mod_id].add(directory)
+                                        break
+
+            # Fetch mod details
+            all_mod_ids = list(mod_to_dirs.keys())
+            if all_mod_ids:
+                try:
+                    mods_payload = self.http.post('https://api.curseforge.com/v1/mods',
+                                                json={'modIds': all_mod_ids},
+                                                headers={'x-api-key': CF_API_KEY},
+                                                timeout=30)
+                    if mods_payload.status_code == 200:
+                        mods_data = mods_payload.json()['data']
+
+                        for mod in mods_data:
+                            mod_id = mod['id']
+                            if mod_id in mod_to_dirs:
+                                detected.append(DetectedAddon(
+                                    name=mod['name'],
+                                    url=f'cf:{mod["slug"]}',
+                                    directories=sorted(mod_to_dirs[mod_id]),
+                                    is_installed=False  # Will be determined by Core
+                                ))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return detected

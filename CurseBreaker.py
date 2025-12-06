@@ -108,6 +108,7 @@ class TUI:
         except RuntimeError:
             self.handle_shutdown('[bold red]The config file is corrupted. Restore the earlier version from backup.[/bol'
                                  'd red]\n')
+        self.core.init_providers()
         self.setup_table()
         # Wago Addons URI Support
         if len(sys.argv) == 2 and sys.argv[1].startswith('wago-app://addons/'):

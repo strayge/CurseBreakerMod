@@ -4,13 +4,14 @@ import re
 import hashlib
 import httpx
 import zipfile
-from typing import Any
+from typing import Any, final
 from pathlib import Path
 from datetime import datetime
 from dateutil import parser
 from dateutil.tz import tzutc
 from json import JSONDecodeError
 from . import retry, APIAuth
+from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon
 
 
 def parse_wagoaddons_error(code: int) -> None:
@@ -38,12 +39,13 @@ def parse_wagoapp_payload(url: str, client_type: str | None, api_key: str, http:
     return f'https://addons.wago.io/addons/{payload["slug"]}'
 
 
-class WagoAddonsAddon:
-    @retry()
+@final
+class WagoAddonsAddon(BaseAddon):
     def __init__(
         self, url: str, checkcache: dict[str, Any], clienttype: str,
         clientversion: str, allowdev: int, apikey: str, http: httpx.Client
     ) -> None:
+        super().__init__()
         project = url.replace('https://addons.wago.io/addons/', '')
         self.http: httpx.Client = http
         self.apiKey: str = apikey
@@ -54,42 +56,39 @@ class WagoAddonsAddon:
             self.payload['display_name'] = self.payload['name']
             self.payload['recent_release'] = self.payload['recent_releases']
         else:
-            if self.apiKey == '':
-                raise RuntimeError(f'{url}\nThe Wago Addons API key is missing. '
-                                   f'It can be obtained here: https://addons.wago.io/patreon')
-            try:
-                self.payload = self.http.get(f'https://addons.wago.io/api/external/addons/{project}?game_version='
-                                             f'{self.clientType}', auth=APIAuth('Bearer', self.apiKey))
-            except httpx.RequestError as e:
-                raise RuntimeError(f'{url}\nWago Addons API failed to respond.') from e
-            if self.payload.status_code == 401:
-                raise RuntimeError(f'{url}\nWago Addons API key is missing or incorrect.')
-            elif self.payload.status_code == 403:
-                raise RuntimeError(f'{url}\nProvided Wago Addons API key is expired. Please acquire a new one.')
-            elif self.payload.status_code == 404:
-                raise RuntimeError(f'{url}\nThis might be a temporary issue with Wago Addons API or the project was '
-                                   f'removed/renamed. In this case, uninstall it (and reinstall if it still exists) '
-                                   f'to fix this issue.')
-            elif self.payload.status_code == 423:
-                raise RuntimeError(f'{url}\nProvided Wago Addons API key is blocked. Please acquire a new one.')
-            elif self.payload.status_code in [429, 500, 502, 504]:
-                raise RuntimeError(f'{url}\nTemporary Wago Addons API issue. Please try later.')
-            else:
-                try:
-                    self.payload = self.payload.json()
-                except (StopIteration, JSONDecodeError) as e:
-                    raise RuntimeError(f'{url}\nThis might be a temporary issue with Wago Addons API.') from e
-        self.name: str = self.payload['display_name'].strip().strip('\u200b')
+            self.payload = self._get_metadata(project, url)
+        self.name = self.payload['display_name'].strip().strip('\u200b')
         self.allowDev: int = allowdev
-        self.downloadUrl: str | None = None
-        self.changelogUrl: str | None = None
-        self.currentVersion: str | None = None
-        self.uiVersion: str | None = None
-        self.archive: zipfile.ZipFile | None = None
-        self.directories: list[str] = []
-        self.author: list[str] = self.payload['authors']
-        self.zipContent: bytes = b''
+        self.author = self.payload['authors']
         self.get_current_version()
+
+    @retry()
+    def _get_metadata(self, project: str, url: str) -> dict[str, Any]:
+        if self.apiKey == '':
+            raise RuntimeError(f'{url}\nThe Wago Addons API key is missing. '
+                                f'It can be obtained here: https://addons.wago.io/patreon')
+        try:
+            response = self.http.get(f'https://addons.wago.io/api/external/addons/{project}?game_version='
+                                            f'{self.clientType}', auth=APIAuth('Bearer', self.apiKey))
+        except httpx.RequestError as e:
+            raise RuntimeError(f'{url}\nWago Addons API failed to respond.') from e
+        if response.status_code == 401:
+            raise RuntimeError(f'{url}\nWago Addons API key is missing or incorrect.')
+        if response.status_code == 403:
+            raise RuntimeError(f'{url}\nProvided Wago Addons API key is expired. Please acquire a new one.')
+        if response.status_code == 404:
+            raise RuntimeError(f'{url}\nThis might be a temporary issue with Wago Addons API or the project was '
+                                f'removed/renamed. In this case, uninstall it (and reinstall if it still exists) '
+                                f'to fix this issue.')
+        if response.status_code == 423:
+            raise RuntimeError(f'{url}\nProvided Wago Addons API key is blocked. Please acquire a new one.')
+        if response.status_code in [429, 500, 502, 504]:
+            raise RuntimeError(f'{url}\nTemporary Wago Addons API issue. Please try later.')
+
+        try:
+            return response.json()
+        except (StopIteration, JSONDecodeError) as e:
+            raise RuntimeError(f'{url}\nThis might be a temporary issue with Wago Addons API.') from e
 
     def get_current_version(self) -> None:
         if len(self.payload['recent_release']) == 0:
@@ -140,7 +139,8 @@ class WagoAddonsAddon:
             raise RuntimeError(f'{self.name}.\nProject package is corrupted or incorrectly packaged.')
 
     def install(self, path: Path) -> None:
-        self.archive.extractall(path)
+        if self.archive:
+            self.archive.extractall(path)
 
 
 class WagoAddonsHasher:
@@ -186,3 +186,115 @@ class WagoAddonsHasher:
 
     def get_hash(self) -> str:
         return hashlib.md5(''.join(self.hashes).encode('utf-8')).hexdigest()
+
+
+class WagoAddonsProvider(BaseAddonProvider):
+    """Provider for Wago Addons."""
+
+    def __init__(self, http: httpx.Client, config: dict[str, Any], master_config: dict[str, Any]):
+        super().__init__(http, config, master_config)
+        self.name: str = "Wago"
+        self.prefix: str = "wa"
+        self.wagoIdCache: dict[str, Any] | None = None
+
+    def is_addon_url(self, url: str) -> bool:
+        return url.startswith('https://addons.wago.io/addons/')
+
+    def convert_url_to_id(self, url: str) -> str:
+        return url.replace('https://addons.wago.io/addons/', '')
+
+    def convert_id_to_url(self, identifier: str) -> str:
+        return f'https://addons.wago.io/addons/{identifier}'
+
+    def create_addon(self, url: str, client_type: str, **kwargs: Any) -> BaseAddon:
+        return WagoAddonsAddon(
+            url,
+            self.cache,
+            client_type,
+            kwargs.get('client_version', ''),
+            kwargs.get('dev_level', 0),
+            self.config['WAAAPIKey'],
+            self.http
+        )
+
+    def bulk_check(self, addon_urls: list[str], client_type: str) -> None:
+        """Bulk check for updates from Wago Addons API."""
+        if not self.config['WAAAPIKey']:
+            return
+
+        # Extract slugs from URLs
+        ids = [{'slug': self.convert_url_to_id(url), 'id': ''} for url in addon_urls]
+
+        # Get ID cache
+        if not self.wagoIdCache:
+            try:
+                response = self.http.get(
+                    f'https://addons.wago.io/api/data/slugs?game_version={client_type}',
+                    timeout=15
+                )
+                parse_wagoaddons_error(response.status_code)
+                self.wagoIdCache = response.json()
+            except Exception:
+                return
+
+        # Map slugs to IDs
+        if self.wagoIdCache:
+            for addon in ids:
+                if addon['slug'] in self.wagoIdCache.get('addons', {}):
+                    addon['id'] = self.wagoIdCache['addons'][addon['slug']]['id']
+
+        # Fetch recent releases
+        try:
+            payload = self.http.post(
+                f'https://addons.wago.io/api/external/addons/_recents?game_version={client_type}',
+                json={'addons': [addon["id"] for addon in ids if addon["id"] != ""]},
+                auth=APIAuth('Bearer', self.config['WAAAPIKey']),
+                timeout=15
+            )
+            parse_wagoaddons_error(payload.status_code)
+            payload = payload.json()
+
+            # Populate cache
+            for addonid in payload.get('addons', {}):
+                for addon in ids:
+                    if addon['id'] == addonid:
+                        self.cache[addon['slug']] = payload['addons'][addonid]
+                        break
+        except Exception:
+            pass
+
+    def scan(self, addon_dirs: list[str], path: Path, client_type: str) -> list[DetectedAddon]:
+        """Scan directories for Wago Addons using hash matching."""
+        if not self.config['WAAAPIKey']:
+            return []
+
+        detected: list[DetectedAddon] = []
+        wago_input: list[dict[str, str]] = []
+
+        for directory in addon_dirs:
+            directoryhash = WagoAddonsHasher(path / directory)
+            wago_input.append({'name': directory, 'hash': directoryhash.get_hash()})
+
+        if not wago_input:
+            return []
+
+        try:
+            payload = self.http.post(
+                f'https://addons.wago.io/api/external/addons/_match?game_version={client_type}',
+                json={'addons': wago_input},
+                auth=APIAuth('Bearer', self.config['WAAAPIKey'])
+            )
+            parse_wagoaddons_error(payload.status_code)
+            payload = payload.json()
+
+            for addon in payload.get('addons', []):
+                detected.append(DetectedAddon(
+                    name=addon['name'],
+                    url=f'wa:{addon["website_url"].split("/")[-1]}',
+                    directories=[addon['name']],  # TODO: Get actual directories from match
+                    is_installed=False  # Will be determined by Core
+                ))
+        except Exception:
+            pass
+
+        return detected

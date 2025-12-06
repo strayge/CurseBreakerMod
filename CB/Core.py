@@ -1,5 +1,4 @@
 import os
-import re
 import io
 import sys
 import json
@@ -16,14 +15,16 @@ from checksumdir import dirhash
 from urllib.parse import quote_plus
 from rich.progress import Progress, BarColumn
 from typing import Any
-from . import retry, APIAuth, __version__
-from .Tukui import TukuiAddon
-from .GitHub import GitHubAddon, GitHubAddonRaw
-from .WagoAddons import WagoAddonsAddon, WagoAddonsHasher, parse_wagoaddons_error, parse_wagoapp_payload
-from .WoWInterface import WoWInterfaceAddon
-from .CurseForge import (CurseForgeAddon, CF_API_KEY,
-                         detect_curseforge_addons, scan_directory_fingerprints)
+from . import APIAuth, __version__
+from .BaseProvider import BaseAddon, BaseAddonProvider
+from .WagoAddons import parse_wagoapp_payload, parse_wagoaddons_error
 from .ModManager import CLEAN_BACKUP_DIR, ModManager
+from .CurseForge import CurseForgeProvider
+from .WagoAddons import WagoAddonsProvider
+from .WoWInterface import WoWInterfaceProvider
+from .GitHub import GitHubProvider
+from .Tukui import TukuiProvider
+from .CustomRepository import CustomRepositoryProvider
 
 
 class Core:
@@ -40,15 +41,9 @@ class Core:
         self.config: dict[str, Any] = None
         self.masterConfig: dict[str, Any] = None
         self.dirIndex: dict[str, Any] | None = None
-        self.wowiCache: dict[str, Any] = {}
-        self.wagoCache: dict[str, Any] = {}
-        self.githubCache: dict[str, Any] = {}
-        self.githubPackagerCache: dict[str, Any] = {}
-        self.wagoIdCache: dict[str, Any] | None = None
-        self.tukuiCache: dict[str, Any] | None = None
         self.checksumCache: dict[str, bool] = {}
-        self.cfCache: dict[str, Any] = {}
         self.mod_manager: ModManager = ModManager(self)
+        self.providers: list[BaseAddonProvider] = []
 
     def init_master_config(self) -> None:
         self.masterConfig = {'CustomRepository': {}, 'ClientTypes': {}}
@@ -167,6 +162,17 @@ class Core:
         self.config['Version'] = __version__
         self.save_config()
 
+    def init_providers(self) -> None:
+        """Initialize providers after config and master config are loaded."""
+        self.providers = [
+            CurseForgeProvider(self.http, self.config, self.masterConfig),
+            WagoAddonsProvider(self.http, self.config, self.masterConfig),
+            WoWInterfaceProvider(self.http, self.config, self.masterConfig),
+            GitHubProvider(self.http, self.config, self.masterConfig),
+            TukuiProvider(self.http, self.config, self.masterConfig),
+            CustomRepositoryProvider(self.http, self.config, self.masterConfig),
+        ]
+
     def check_if_installed(self, url: str) -> dict[str, Any] | None:
         for addon in self.config['Addons']:
             if url in (addon['URL'], addon['Name']):
@@ -204,9 +210,13 @@ class Core:
         return bool(addon and 'Block' in addon.keys())
 
     def check_if_dev_global(self) -> int:
+        """Check if any dev-capable addon has dev mode enabled."""
         for addon in self.config['Addons']:
-            if addon['URL'].startswith('https://addons.wago.io/addons/') and 'Development' in addon.keys():
-                return addon['Development']
+            for provider in self.providers:
+                if provider.is_addon_url(addon['URL']) and provider.name in ['Wago', 'CF']:
+                    if 'Development' in addon.keys():
+                        return addon['Development']
+                    break
         return 0
 
     def check_if_from_gh(self) -> bool:
@@ -264,56 +274,34 @@ class Core:
         if not list(clean_dir.glob('*')):
             clean_dir.rmdir()
 
-    def parse_url(self, url: str) -> Any:
-        if url.startswith('https://addons.wago.io/addons/'):
-            return WagoAddonsAddon(url, self.wagoCache,
-                                   'retail' if url in self.config['IgnoreClientVersion'].keys() else self.clientType,
-                                   self.masterConfig['ClientTypes'][self.clientType]['CurrentVersion'],
-                                   self.check_if_dev(url), self.config['WAAAPIKey'], self.http)
-        elif url.startswith('https://www.wowinterface.com/downloads/'):
-            return WoWInterfaceAddon(url, self.wowiCache, self.http)
-        elif url.startswith('https://github.com/'):
-            return GitHubAddon(url, self.githubCache, self.githubPackagerCache, self.clientType,
-                               self.config['GHAPIKey'], self.http)
-        elif url.lower() == 'elvui':
-            self.bulk_tukui_check()
-            return TukuiAddon('elvui', self.tukuiCache,
-                              self.masterConfig['ClientTypes'][self.clientType]['CurrentVersion'], self.http)
-        elif url.lower() == 'tukui':
-            self.bulk_tukui_check()
-            return TukuiAddon('tukui', self.tukuiCache,
-                              self.masterConfig['ClientTypes'][self.clientType]['CurrentVersion'], self.http)
-        elif url.lower() in self.masterConfig['CustomRepository'].keys():
-            return GitHubAddonRaw(self.masterConfig['CustomRepository'][url.lower()], self.config['GHAPIKey'],
-                                  self.http)
-        elif url.startswith('https://www.townlong-yak.com/addons/'):
+    def parse_url(self, url: str) -> BaseAddon:
+        # Check for legacy/unsupported providers
+        if url.startswith('https://www.townlong-yak.com/addons/'):
             raise RuntimeError(f'{url}\nTownlong Yak is no longer supported by this application.')
-        elif url.startswith('https://www.curseforge.com/wow/addons/'):
-            return CurseForgeAddon(url, self.cfCache,
-                                   'retail' if url in self.config['IgnoreClientVersion'].keys() else self.clientType,
-                                   self.check_if_dev(url), self.http)
-        elif url.startswith('https://www.tukui.org/'):
+        if url.startswith('https://www.tukui.org/'):
             raise RuntimeError(f'{url}\nTukui.org is no longer supported by this application.')
-        else:
-            raise NotImplementedError('Provided URL is not supported.')
+
+        # Ensure clientType is set
+        if not self.clientType:
+            raise RuntimeError('Client type is not initialized.')
+
+        # Find matching provider
+        for provider in self.providers:
+            client_type = 'retail' if url in self.config['IgnoreClientVersion'].keys() else self.clientType
+            client_version = self.masterConfig['ClientTypes'].get(self.clientType, {}).get('CurrentVersion')
+
+            if provider.is_addon_url(url):
+                return provider.create_addon(
+                    url, client_type, client_version=client_version, dev_level=self.check_if_dev(url)
+                )
+
+        raise NotImplementedError('Provided URL is not supported.')
 
     def parse_url_source(self, url: str) -> tuple[str, str | None]:
-        if url.startswith('https://addons.wago.io/addons/'):
-            return 'Wago', url
-        elif url.startswith('https://www.wowinterface.com/downloads/'):
-            return 'WoWI', url
-        elif url.startswith('https://www.curseforge.com/wow/addons/'):
-            return 'CF', url
-        elif url.startswith('https://github.com/'):
-            return 'GitHub', url
-        elif url.lower().endswith(':dev'):
-            return 'GitHub', f'https://github.com/{self.masterConfig["CustomRepository"][url.lower()]["Repository"]}'
-        elif url.lower().startswith('elvui'):
-            return 'Tukui', 'https://www.tukui.org/download.php?ui=elvui'
-        elif url.lower().startswith('tukui'):
-            return 'Tukui', 'https://www.tukui.org/download.php?ui=tukui'
-        else:
-            return '?', None
+        for provider in self.providers:
+            if provider.is_addon_url(url):
+                return provider.name, provider.get_website_url(url)
+        return '?', None
 
     def parse_new_addon(self, ignore: bool, url: str) -> tuple[bool, str, str]:
         if ignore:
@@ -324,7 +312,7 @@ class Core:
             return False, addon['Name'], addon['Version']
         self.cleanup(new.directories)
         # Save original ZIP before installing
-        if hasattr(new, 'zipContent'):
+        if new.zipContent is not None:
             self._save_clean_zip(new.name, new.currentVersion, new.zipContent)
         new.install(self.path)
         checksums = {}
@@ -336,23 +324,27 @@ class Core:
                                       'Directories': new.directories,
                                       'Checksums': checksums})
         self.save_config()
-        return True, new.name, new.currentVersion
+        return True, new.name, new.currentVersion or ""
 
     def add_addon(self, url: str, ignore: bool) -> tuple[bool, str, str]:
         if url.endswith(':'):
             raise NotImplementedError('Provided URL is not supported.')
-        elif 'wago-app://' in url:
+
+        # Handle wago-app:// protocol
+        if 'wago-app://' in url:
             url = parse_wagoapp_payload(url, self.clientType, self.config['WAAAPIKey'], self.http)
-        elif url.startswith('wa:'):
-            url = f'https://addons.wago.io/addons/{url[3:]}'
-        elif url.startswith('wowi:'):
-            url = f'https://www.wowinterface.com/downloads/info{url[5:]}.html'
-        elif url.startswith('gh:'):
-            url = f'https://github.com/{url[3:]}'
-        elif url.startswith('cf:'):
-            url = f'https://www.curseforge.com/wow/addons/{url[3:]}'
+
+        # Handle shorthand URLs using providers
+        for provider in self.providers:
+            if provider.prefix and url.startswith(f'{provider.prefix}:'):
+                identifier = url[len(provider.prefix)+1:]
+                url = provider.convert_id_to_url(identifier)
+                break
+
+        # Normalize URL
         if url.endswith('/'):
             url = url[:-1]
+
         if addon := self.check_if_installed(url):
             return False, addon['Name'], addon['Version']
         else:
@@ -394,7 +386,7 @@ class Core:
         if force or (new.currentVersion != old['Version'] and update and not modified and not blocked):
             new.get_addon()
             # Save original ZIP before installing
-            if hasattr(new, 'zipContent'):
+            if new.zipContent is not None:
                 self._save_clean_zip(new.name, new.currentVersion, new.zipContent)
             self.cleanup(old['Directories'])
             new.install(self.path)
@@ -452,35 +444,23 @@ class Core:
                 self.checksumCache[url] = checksums_valid
 
     def dev_toggle(self, url: str) -> int | None:
+        """Toggle development/beta channel for providers that support it."""
         if url == 'global':
             state = self.check_if_dev_global()
+            new_state = (state + 1) % 3 or None
             for addon in self.config['Addons']:
-                if addon['URL'].startswith('https://addons.wago.io/addons/') or \
-                   addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
-                    if state == 0:
-                        addon['Development'] = 1
-                    elif state == 1:
-                        addon['Development'] = 2
-                    elif state == 2:
-                        addon.pop('Development', None)
+                addon['Development'] = new_state
             self.save_config()
             return state
-        else:
-            if addon := self.check_if_installed(url):
-                if addon['URL'].startswith('https://addons.wago.io/addons/') or \
-                   addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
-                    state = self.check_if_dev(url)
-                    if state == 0:
-                        addon['Development'] = 1
-                    elif state == 1:
-                        addon['Development'] = 2
-                    elif state == 2:
-                        addon.pop('Development', None)
-                    self.save_config()
-                    return state
-                else:
-                    return -1
+
+        addon = self.check_if_installed(url)
+        if not addon:
             return None
+        state = self.check_if_dev(url)
+        new_state = (state + 1) % 3 or None
+        addon['Development'] = new_state
+        self.save_config()
+        return state
 
     def block_toggle(self, url: str) -> bool | None:
         if addon := self.check_if_installed(url):
@@ -593,121 +573,22 @@ class Core:
                           '@="\\"' + os.path.abspath(sys.executable).replace('\\', '\\\\') + '\\" \\"%1\\""')
 
     def bulk_check(self, addons: list[dict[str, Any]]) -> None:
-        ids_wowi = []
-        ids_wago = []
-        ids_gh = []
-        ids_cf = []
-        for addon in addons:
-            if addon['URL'].startswith('https://www.wowinterface.com/downloads/'):
-                ids_wowi.append(re.findall(r'\d+', addon['URL'])[0].strip())
-            elif addon['URL'].startswith('https://addons.wago.io/addons/') and \
-                    addon['URL'] not in self.config['IgnoreClientVersion'].keys():
-                ids_wago.append({'slug': addon['URL'].replace('https://addons.wago.io/addons/', ''), 'id': ''})
-            elif addon['URL'].startswith('https://www.curseforge.com/wow/addons/') and \
-                    addon['URL'] not in self.config['IgnoreClientVersion'].keys():
-                ids_cf.append({'slug': addon['URL'].split('/')[-1], 'id': 0})
-            elif addon['URL'].startswith('https://github.com/'):
-                ids_gh.append(addon['URL'].replace('https://github.com/', ''))
-        if ids_wowi:
-            self.bulk_wowi_check(ids_wowi)
-        if ids_wago and self.config['WAAAPIKey'] != '':
-            self.bulk_wago_check(ids_wago)
-        if ids_cf:
-            self.bulk_cf_check(ids_cf)
-        if ids_gh and self.config['GHAPIKey'] != '':
-            self.bulk_gh_check(ids_gh)
-
-    def bulk_wowi_check(self, ids: list[str]) -> None:
-        payload = self.http.get(f'https://api.mmoui.com/v3/game/WOW/filedetails/{",".join(ids)}.json',
-                                timeout=15).json()
-        if 'ERROR' not in payload:
-            for addon in payload:
-                self.wowiCache[str(addon['UID'])] = addon
-
-    def bulk_wago_check(self, ids: list[dict[str, str]]) -> None:
-        if not self.wagoIdCache:
-            response = self.http.get(f'https://addons.wago.io/api/data/slugs?game_version={self.clientType}',
-                                             timeout=15)
-            parse_wagoaddons_error(response.status_code)
-            self.wagoIdCache = response.json()
-        for addon in ids:
-            if addon['slug'] in self.wagoIdCache['addons']:
-                addon['id'] = self.wagoIdCache['addons'][addon['slug']]['id']
-        payload = self.http.post(f'https://addons.wago.io/api/external/addons/_recents?game_version={self.clientType}',
-                                 json={'addons': [addon["id"] for addon in ids if addon["id"] != ""]},
-                                 auth=APIAuth('Bearer', self.config['WAAAPIKey']), timeout=15)
-        parse_wagoaddons_error(payload.status_code)
-        payload = payload.json()
-        for addonid in payload['addons']:
-            for addon in ids:
-                if addon['id'] == addonid:
-                    self.wagoCache[addon['slug']] = payload['addons'][addonid]
-                    break
-
-    def bulk_cf_check(self, ids: list[dict[str, Any]]) -> None:
-        mod_ids = [addon['id'] for addon in ids if addon['id'] != 0]
-        if not mod_ids:
+        """Bulk check for updates using all providers."""
+        if not self.clientType:
             return
-        try:
-            payload = self.http.post('https://api.curseforge.com/v1/mods',
-                                    json={'modIds': mod_ids},
-                                    headers={'x-api-key': CF_API_KEY},
-                                    timeout=15)
-        except httpx.RequestError:
-            return
-        if payload.status_code != 200:
-            return
-        try:
-            data = payload.json()['data']
-            for mod in data:
-                self.cfCache[mod['slug']] = mod
-        except (KeyError, TypeError):
-            pass
 
-    def bulk_gh_check_worker(self, node_id: str, url: str) -> tuple[str, Any]:
-        return node_id, self.http.get(url, headers={'Accept': 'application/octet-stream'},
-                                      auth=APIAuth('Bearer', self.config['GHAPIKey'])).json()
+        for provider in self.providers:
+            # Filter addons for this provider (excluding ignored client versions for some providers)
+            provider_urls: list[str] = []
+            for addon in addons:
+                if provider.is_addon_url(addon['URL']):
+                    # Skip client version check for providers that don't need it
+                    if provider.name in ['Wago', 'CF'] and addon['URL'] in self.config['IgnoreClientVersion'].keys():
+                        continue
+                    provider_urls.append(addon['URL'])
 
-    def bulk_gh_check(self, ids: list[str]) -> None:
-        query = ('{\n  "query": "{ search( type: REPOSITORY query: \\"' + f'repo:{" repo:".join(ids)}' + ' fork:true\\"'
-                 ' first: 100 ) { nodes { ... on Repository { nameWithOwner releases(first: 15) { nodes { tag_name: tag'
-                 'Name name html_url: url draft: isDraft prerelease: isPrerelease assets: releaseAssets(first: 100) { n'
-                 'odes { node_id: id name content_type: contentType url } } } } } } }}"\n'
-                 '}')
-        payload = self.http.post('https://api.github.com/graphql', json=json.loads(query),
-                                 auth=APIAuth('Bearer', self.config['GHAPIKey']), timeout=15)
-        if payload.status_code != 200:
-            return
-        payload = payload.json()
-        packager_cache = {}
-        for addon in payload['data']['search']['nodes']:
-            self.githubCache[addon['nameWithOwner']] = addon['releases']['nodes']
-        for addon in self.githubCache:
-            for i in range(len(self.githubCache[addon])):
-                self.githubCache[addon][i]['assets'] = self.githubCache[addon][i]['assets']['nodes']
-            for release in self.githubCache[addon]:
-                if not release['draft'] and not release['prerelease']:
-                    for asset in release['assets']:
-                        if asset['name'] == 'release.json':
-                            packager_cache[asset['node_id']] = asset['url']
-                            break
-                    break
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            workers = []
-            for node_id, url in packager_cache.items():
-                workers.append(executor.submit(self.bulk_gh_check_worker, node_id, url))
-            for future in concurrent.futures.as_completed(workers):
-                try:
-                    output = future.result()
-                except (httpx.RequestError, json.JSONDecodeError):
-                    pass
-                else:
-                    self.githubPackagerCache[output[0]] = output[1]
-
-    @retry(custom_error='Failed to parse Tukui API data')
-    def bulk_tukui_check(self) -> None:
-        if not self.tukuiCache:
-            self.tukuiCache = self.http.get('https://api.tukui.org/v1/addons').json()
+            if provider_urls:
+                provider.bulk_check(provider_urls, self.clientType)
 
     def detect_accounts(self) -> list[str]:
         if not os.path.isdir(Path('WTF/Account')):
@@ -720,80 +601,50 @@ class Core:
                 accounts_processed.append(account)
         return accounts_processed
 
-    # TODO: Refactor to be smarter
     def detect_addons(self) -> tuple[list[str], list[str], list[str]]:
-        names = []
-        namesinstalled = []
-        slugs = []
+        """Detect addons using all providers."""
+        names: list[str] = []
+        namesinstalled: list[str] = []
+        slugs: list[str] = []
+
+        if not self.clientType:
+            return names, slugs, namesinstalled
+
+        # List of directories to ignore
         ignored = ['ElvUI_OptionsUI', 'ElvUI_Options', 'ElvUI_Libraries', 'Tukui_Config', '+Wowhead_Looter',
                    'WeakAurasCompanion', 'CurseBreakerCompanion', 'SharedMedia_MyMedia', 'TradeSkillMaster_AppHelper',
                    'WagoAnalytics', 'WagoAppCompanion', '.DS_Store', '.git']
-        specialcases = ['ElvUI', 'Tukui']
 
-        # Collect directories to scan
-        addon_dirs = []
+        # Collect addon directories
+        addon_dirs: list[str] = []
         for directory in os.listdir(self.path):
-            if os.path.isdir(self.path / directory) and not os.path.islink(self.path / directory) and \
-                    not os.path.isdir(self.path / directory / '.git') and not directory.startswith('Blizzard_') and \
-                    directory not in ignored + specialcases:
+            if (os.path.isdir(self.path / directory) and
+                not os.path.islink(self.path / directory) and
+                not os.path.isdir(self.path / directory / '.git') and
+                not directory.startswith('Blizzard_') and
+                directory not in ignored):
                 addon_dirs.append(directory)
 
-        # Scan directories for fingerprints in parallel
-        from rich.progress import Progress, BarColumn
-        folder_fingerprints: dict[str, int | None] = {}  # {directory: fingerprint}
+        matched_dirs: set[str] = set()
 
-        with Progress('{task.completed}/{task.total}', '|', BarColumn(bar_width=None), '|',
-                      auto_refresh=False) as progress:
-            task = progress.add_task('', total=len(addon_dirs), completed=0)
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                workers = []
-                for directory in addon_dirs:
-                    workers.append(executor.submit(scan_directory_fingerprints, self.path, directory))
-                for future in concurrent.futures.as_completed(workers):
-                    directory, folder_fingerprint = future.result()
-                    if folder_fingerprint is not None:
-                        folder_fingerprints[directory] = folder_fingerprint
-                    progress.update(task, advance=1, refresh=True)
+        # Scan with each provider (in priority order)
+        for provider in self.providers:
+            # Only scan directories not yet matched
+            remaining_dirs = [d for d in addon_dirs if d not in matched_dirs]
+            if not remaining_dirs:
+                break
 
-        # Call CurseForge fingerprint detection
-        cf_names, cf_slugs, cf_namesinstalled, cf_matched_dirs = detect_curseforge_addons(
-            self.http, folder_fingerprints, self.check_if_installed_dirs
-        )
+            detected = provider.scan(remaining_dirs, self.path, self.clientType)
 
-        names.extend(cf_names)
-        slugs.extend(cf_slugs)
-        namesinstalled.extend(cf_namesinstalled)
+            for addon in detected:
+                matched_dirs.update(addon.directories)
 
-        # Optionally call WagoAddons API if key is provided
-        if self.config['WAAAPIKey'] != '':
-            wago_output: list[dict[str, str]] = []
-            for directory in addon_dirs:
-                # Skip directories already matched by CurseForge
-                if directory not in cf_matched_dirs:
-                    directoryhash = WagoAddonsHasher(self.path / directory)
-                    wago_output.append({'name': directory, 'hash': directoryhash.get_hash()})
-
-            if wago_output:
-                payload = self.http.post(f'https://addons.wago.io/api/external/addons/_match?game_version={self.clientType}',
-                                        json={'addons': wago_output},
-                                        auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-                parse_wagoaddons_error(payload.status_code)
-                payload = payload.json()
-                for addon in payload['addons']:
-                    if self.check_if_installed(addon['website_url']):
-                        namesinstalled.append(addon['name'])
-                    else:
-                        names.append(addon['name'])
-                        slugs.append(f'wa:{addon["website_url"].split("/")[-1]}')
-
-        # Handle special cases
-        for special in specialcases:
-            if os.path.isdir(self.path / special):
-                if self.check_if_installed(special):
-                    namesinstalled.append(special)
+                # Check if already installed
+                if self.check_if_installed(addon.url):
+                    namesinstalled.append(addon.name)
                 else:
-                    names.append(special)
-                    slugs.append(special)
+                    names.append(addon.name)
+                    slugs.append(addon.url)
 
         names.sort()
         namesinstalled.sort()
@@ -802,17 +653,17 @@ class Core:
         return names, slugs, namesinstalled
 
     def export_addons(self) -> str:
+        """Export installed addons to shorthand format."""
         addons = []
         for addon in self.config['Addons']:
-            if addon['URL'].startswith('https://addons.wago.io/addons/'):
-                url = f'wa:{addon["URL"].replace("https://addons.wago.io/addons/", "")}'
-            elif addon['URL'].startswith('https://www.wowinterface.com/downloads/info'):
-                url = f'wowi:{addon["URL"].split("/info")[-1].replace(".html", "")}'
-            elif addon['URL'].startswith('https://www.curseforge.com/wow/addons/'):
-                url = f'cf:{addon["URL"].split("/")[-1]}'
-            elif addon['URL'].startswith('https://github.com/'):
-                url = f'gh:{addon["URL"].replace("https://github.com/", "")}'
-            else:
-                url = addon['URL'].lower()
+            url = addon['URL']
+
+            # Find provider and convert to shorthand
+            for provider in self.providers:
+                if provider.is_addon_url(url):
+                    url = provider.url_to_shorthand(url)
+                    break
+
             addons.append(url)
+
         return f'install {",".join(sorted(addons))}'
