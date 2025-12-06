@@ -1,5 +1,7 @@
 import os
 import io
+import re
+import hashlib
 import httpx
 import zipfile
 from typing import Any
@@ -114,3 +116,48 @@ class WagoAddonsAddon:
 
     def install(self, path: Path) -> None:
         self.archive.extractall(path)
+
+
+class WagoAddonsHasher:
+    def __init__(self, directory: Path) -> None:
+        self.directory: Path = directory
+        self.filesToHash: list[Path] = []
+        self.filesToParse: list[Path] = []
+        self.hashes: list[str] = []
+        self.parse()
+
+    def parse_file(self, target: list[Path]):
+        for f in target:
+            if f.is_file():
+                self.filesToHash.append(f)
+                if not f.name.lower().endswith('.lua'):
+                    with open(f, encoding='utf-8', errors='ignore') as g:
+                        newfilestoparse = None
+                        data = g.read()
+                        if f.name.lower().endswith('.toc'):
+                            data = re.sub(r'\s*#.*$', '', data, flags=re.I | re.M)
+                            newfilestoparse = re.findall(r'^\s*((?:(?<!\.\.).)+\.(?:xml|lua))\s*$', data,
+                                                         flags=re.I | re.M)
+                        elif f.name.lower().endswith('.xml'):
+                            data = re.sub(r'<!--.*?-->', '', data, flags=re.I | re.S)
+                            newfilestoparse = re.findall(r"<(?:Include|Script)\s+file=[\"']((?:(?<!\.\.).)+)[\"']\s*/>",
+                                                         data, flags=re.I)
+                        if newfilestoparse and len(newfilestoparse) > 0:
+                            newfilestoparse = [Path(f.parent, element) for element in newfilestoparse]
+                            self.parse_file(newfilestoparse)
+
+    def parse(self) -> None:
+        for f in list(self.directory.glob('*')):
+            if f.name.lower().endswith('.toc'):
+                self.filesToParse.append(f)
+            elif f.name.lower() == 'bindings.xml':
+                self.filesToHash.append(f)
+        self.parse_file(self.filesToParse)
+        self.filesToHash = list(dict.fromkeys(self.filesToHash))
+        for f in self.filesToHash:
+            with open(f, 'rb') as g:
+                self.hashes.append(hashlib.md5(g.read()).hexdigest())
+        self.hashes.sort()
+
+    def get_hash(self) -> str:
+        return hashlib.md5(''.join(self.hashes).encode('utf-8')).hexdigest()

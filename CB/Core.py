@@ -8,7 +8,6 @@ import glob
 import httpx
 import shutil
 import zipfile
-import hashlib
 import datetime
 import concurrent.futures
 from pathlib import Path
@@ -20,7 +19,7 @@ from typing import Any
 from . import retry, APIAuth, __version__
 from .Tukui import TukuiAddon
 from .GitHub import GitHubAddon, GitHubAddonRaw
-from .WagoAddons import WagoAddonsAddon
+from .WagoAddons import WagoAddonsAddon, WagoAddonsHasher
 from .WoWInterface import WoWInterfaceAddon
 from .CurseForge import (CurseForgeAddon, CF_API_KEY,
                          detect_curseforge_addons, scan_directory_fingerprints)
@@ -776,7 +775,7 @@ class Core:
 
         # Optionally call WagoAddons API if key is provided
         if self.config['WAAAPIKey'] != '':
-            wago_output = []
+            wago_output: list[dict[str, str]] = []
             for directory in addon_dirs:
                 # Skip directories already matched by CurseForge
                 if directory not in cf_matched_dirs:
@@ -836,48 +835,3 @@ class Core:
             raise RuntimeError('Provided Wago Addons API key is blocked. Please acquire a new one.')
         elif code in [429, 500, 502, 504]:
             raise RuntimeError('Temporary Wago Addons API issue. Please try later.')
-
-
-class WagoAddonsHasher:
-    def __init__(self, directory):
-        self.directory = directory
-        self.filesToHash = []
-        self.filesToParse = []
-        self.hashes = []
-        self.parse()
-
-    def parse_file(self, target):
-        for f in target:
-            if f.is_file():
-                self.filesToHash.append(f)
-                if not f.name.lower().endswith('.lua'):
-                    with open(f, encoding='utf-8', errors='ignore') as g:
-                        newfilestoparse = None
-                        data = g.read()
-                        if f.name.lower().endswith('.toc'):
-                            data = re.sub(r'\s*#.*$', '', data, flags=re.I | re.M)
-                            newfilestoparse = re.findall(r'^\s*((?:(?<!\.\.).)+\.(?:xml|lua))\s*$', data,
-                                                         flags=re.I | re.M)
-                        elif f.name.lower().endswith('.xml'):
-                            data = re.sub(r'<!--.*?-->', '', data, flags=re.I | re.S)
-                            newfilestoparse = re.findall(r"<(?:Include|Script)\s+file=[\"']((?:(?<!\.\.).)+)[\"']\s*/>",
-                                                         data, flags=re.I)
-                        if newfilestoparse and len(newfilestoparse) > 0:
-                            newfilestoparse = [Path(f.parent, element) for element in newfilestoparse]
-                            self.parse_file(newfilestoparse)
-
-    def parse(self):
-        for f in list(self.directory.glob('*')):
-            if f.name.lower().endswith('.toc'):
-                self.filesToParse.append(f)
-            elif f.name.lower() == 'bindings.xml':
-                self.filesToHash.append(f)
-        self.parse_file(self.filesToParse)
-        self.filesToHash = list(dict.fromkeys(self.filesToHash))
-        for f in self.filesToHash:
-            with open(f, 'rb') as g:
-                self.hashes.append(hashlib.md5(g.read()).hexdigest())
-        self.hashes.sort()
-
-    def get_hash(self):
-        return hashlib.md5(''.join(self.hashes).encode('utf-8')).hexdigest()
