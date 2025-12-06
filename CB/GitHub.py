@@ -133,9 +133,9 @@ class GitHubAddon:
 
     @retry()
     def get_addon(self):
-        self.archive = zipfile.ZipFile(io.BytesIO(
-            self.http.get(self.downloadUrl, headers={'Accept': 'application/octet-stream'},
-                          auth=APIAuth('Bearer', self.apiKey)).content))
+        self.zipContent = self.http.get(self.downloadUrl, headers={'Accept': 'application/octet-stream'},
+                                        auth=APIAuth('Bearer', self.apiKey)).content
+        self.archive = zipfile.ZipFile(io.BytesIO(self.zipContent))
         for file in self.archive.namelist():
             if file.lower().endswith('.toc') and '/' not in file:
                 raise RuntimeError(f'{self.name}.\nProject package is corrupted or incorrectly packaged.')
@@ -186,7 +186,8 @@ class GitHubAddonRaw:
 
     @retry()
     def get_addon(self):
-        self.archive = zipfile.ZipFile(io.BytesIO(self.http.get(self.downloadUrl).content))
+        self.zipContent = self.http.get(self.downloadUrl).content
+        self.archive = zipfile.ZipFile(io.BytesIO(self.zipContent))
 
     def install(self, path):
         for directory in self.directories:

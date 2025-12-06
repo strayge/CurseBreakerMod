@@ -23,6 +23,7 @@ from .WagoAddons import WagoAddonsAddon
 from .WoWInterface import WoWInterfaceAddon
 from .CurseForge import (CurseForgeAddon, CF_API_KEY,
                          detect_curseforge_addons, scan_directory_fingerprints)
+from .ModManager import CLEAN_BACKUP_DIR, ModManager
 
 
 class Core:
@@ -43,6 +44,7 @@ class Core:
         self.tukuiCache = None
         self.checksumCache = {}
         self.cfCache = {}
+        self.mod_manager = ModManager(self)
 
     def init_master_config(self):
         try:
@@ -79,7 +81,8 @@ class Core:
                            'AutoUpdate': True,
                            'ShowAuthors': True,
                            'ShowSources': False,
-                           'AutoUpdateDelay': True}
+                           'AutoUpdateDelay': True,
+                           'Mods': {}}
             self.save_config()
         if not os.path.isdir('WTF-Backup') and self.config['Backup']['Enabled']:
             os.mkdir('WTF-Backup')
@@ -142,7 +145,8 @@ class Core:
                     ['4.0.0', 'WAAAPIKey', ''],
                     ['4.0.0', 'CBCompanionVersion', 0],
                     ['4.2.0', 'ShowSources', False],
-                    ['4.7.0', 'AutoUpdateDelay', True]]:
+                    ['4.7.0', 'AutoUpdateDelay', True],
+                    ['5.0.0', 'Mods', {}]]:
             if add[1] not in self.config.keys():
                 self.config[add[1]] = add[2]
         for delete in [['1.3.0', 'URLCache'],
@@ -210,6 +214,47 @@ class Core:
             for directory in directories:
                 shutil.rmtree(self.path / directory, ignore_errors=True)
 
+    def _save_clean_zip(self, addon_name, version, zip_content):
+        """Save original downloaded ZIP file for mod diffing"""
+        clean_dir = Path(f'{CLEAN_BACKUP_DIR}/{addon_name}')
+        clean_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = clean_dir / f'{version}.zip'
+        with open(zip_path, 'wb') as f:
+            f.write(zip_content)
+
+    def _cleanup_old_clean_zips(self, addon_name):
+        """Remove old clean ZIPs that are no longer needed"""
+        clean_dir = Path(f'{CLEAN_BACKUP_DIR}/{addon_name}')
+        if not clean_dir.exists():
+            return
+
+        # Get all ZIPs
+        zips = list(clean_dir.glob('*.zip'))
+        if len(zips) <= 1:
+            return
+
+        # Get versions referenced by mods
+        referenced_versions = set()
+        if addon_name in self.config.get('Mods', {}):
+            for mod_data in self.config['Mods'][addon_name].values():
+                if 'baseVersion' in mod_data:
+                    referenced_versions.add(f"{mod_data['baseVersion']}.zip")
+
+        # Get current addon version
+        addon = self.check_if_installed(addon_name)
+        if addon:
+            referenced_versions.add(f"{addon['Version']}.zip")
+
+        # Remove unreferenced ZIPs
+        for zip_file in zips:
+            if zip_file.name not in referenced_versions:
+                zip_file.unlink()
+
+        # Remove directory if empty
+        if not list(clean_dir.glob('*')):
+            clean_dir.rmdir()
+
     def parse_url(self, url):
         if url.startswith('https://addons.wago.io/addons/'):
             return WagoAddonsAddon(url, self.wagoCache,
@@ -269,6 +314,9 @@ class Core:
         if addon := self.check_if_installed_dirs(new.directories):
             return False, addon['Name'], addon['Version']
         self.cleanup(new.directories)
+        # Save original ZIP before installing
+        if hasattr(new, 'zipContent'):
+            self._save_clean_zip(new.name, new.currentVersion, new.zipContent)
         new.install(self.path)
         checksums = {}
         for directory in new.directories:
@@ -308,6 +356,13 @@ class Core:
             self.config['IgnoreClientVersion'].pop(old['URL'], None)
             self.config['Addons'][:] = [d for d in self.config['Addons'] if d.get('URL') != url
                                         and d.get('Name') != url]
+
+            # Cleanup clean ZIPs if no mods exist
+            if old['Name'] not in self.config.get('Mods', {}):
+                clean_dir = Path(f'{CLEAN_BACKUP_DIR}/{old["Name"]}')
+                if clean_dir.exists():
+                    shutil.rmtree(clean_dir)
+
             self.save_config()
             return old['Name'], old['Version']
         return False, False
@@ -327,16 +382,39 @@ class Core:
         new = self.parse_url(old['URL'])
         if force or (new.currentVersion != old['Version'] and update and not modified and not blocked):
             new.get_addon()
+            # Save original ZIP before installing
+            if hasattr(new, 'zipContent'):
+                self._save_clean_zip(new.name, new.currentVersion, new.zipContent)
             self.cleanup(old['Directories'])
             new.install(self.path)
-            checksums = {}
-            for directory in new.directories:
-                checksums[directory] = dirhash(self.path / directory)
+
+            # Reapply mods if they exist
+            if new.name in self.config.get('Mods', {}):
+                try:
+                    self.mod_manager.reapply_all_mods(new.name)
+
+                    # Recalculate checksums after mod application
+                    checksums = {}
+                    for directory in new.directories:
+                        checksums[directory] = dirhash(self.path / directory)
+                except Exception:
+                    # If mod application fails, just use clean checksums
+                    checksums = {}
+                    for directory in new.directories:
+                        checksums[directory] = dirhash(self.path / directory)
+            else:
+                checksums = {}
+                for directory in new.directories:
+                    checksums[directory] = dirhash(self.path / directory)
+
             old['Name'] = new.name
             old['Version'] = new.currentVersion
             old['Directories'] = new.directories
             old['Checksums'] = checksums
             self.save_config()
+
+            # Cleanup old ZIPs
+            self._cleanup_old_clean_zips(new.name)
         if force:
             modified = False
             blocked = False

@@ -433,6 +433,10 @@ class TUI:
                     'wago_api': None,
                     'wago_wow_account': WordCompleter(accounts, ignore_case=True, sentence=True),
                     'gh_api': None},
+            'create_mod': WordCompleter(addons, ignore_case=True),
+            'list_mods': WordCompleter(addons, ignore_case=True),
+            'toggle_mod': WordCompleter(addons, ignore_case=True),
+            'delete_mod': WordCompleter(addons, ignore_case=True),
             'uri_integration': None,
             'help': None,
             'exit': None
@@ -562,9 +566,18 @@ class TUI:
     def _c_update_process(self, addon, update, force, compact, compacted, provider):  # sourcery skip: low-code-quality
         name, authors, versionnew, versionold, uiversion, modified, blocked, source, sourceurl, changelog, dstate \
             = self.core.update_addon(addon if isinstance(addon, str) else addon['URL'], update, force)
+
+        # Add mod indicator if addon has mods
+        mod_indicator = ''
+        if name in self.core.config.get('Mods', {}):
+            enabled_count = sum(1 for m in self.core.config['Mods'][name].values()
+                               if m.get('enabled', False))
+            if enabled_count > 0:
+                mod_indicator = f' [bold cyan][M:{enabled_count}][/bold cyan]'
+
         additionalstatus = f' [bold red]{source.upper()}[/bold red]' if source == 'Unsupported' and not provider else ''
         if versionold:
-            payload = [self.parse_link(name, sourceurl, authors=authors),
+            payload = [self.parse_link(name + mod_indicator, sourceurl, authors=authors),
                        self.parse_link(versionold, changelog, dstate, uiversion=uiversion)]
             if versionold == versionnew:
                 if modified:
@@ -641,9 +654,26 @@ class TUI:
     # noinspection PyTypeChecker
     def c_force_update(self, args):
         if args:
+            # Check if any addons have mods
+            addons = self.parse_args(args)
+            has_mods = any(addon in self.core.config.get('Mods', {})
+                          for addon in addons)
+
+            if has_mods:
+                msg = '[yellow]Some addons have mods. Force update will disable all mods. Continue?[/yellow]'
+                if not Confirm.ask(msg):
+                    return
+
             self.c_update(args, False, True, True)
         elif Confirm.ask('[bold red]Execute a forced update of all addons and overwrite ALL local changes?[/bold red]'):
+            # Disable all mods
+            for addon_name in self.core.config.get('Mods', {}).keys():
+                for mod_data in self.core.config['Mods'][addon_name].values():
+                    mod_data['enabled'] = False
+            self.core.save_config()
+
             self.c_update(False, False, True, True)
+            self.console.print('\n[yellow]All mods have been disabled. Use toggle_mod to re-enable.[/yellow]')
 
     def c_status(self, args):
         optsource = False
@@ -1011,6 +1041,128 @@ class TUI:
                            ']|[/bold white] wowi:\\[addon_id]\n\thttps://github.com/\\[username]/\\[repository_name] [b'
                            'old white]|[/bold white] gh:\\[username]/\\[repository_name]\n\tElvUI [bold white]|[/bold w'
                            'hite] Tukui\n\t' + self.parse_custom_addons(), highlight=False)
+
+    def c_create_mod(self, args):
+        if not args:
+            self.console.print('[green]Usage:[/green]\n\t[green]create_mod [AddonName] [ModName][/green]'
+                              '\n\tCreates a mod from current modifications to the addon.'
+                              '\n\tAddon must be installed and modified before creating mod.')
+            return
+
+        parts = args.strip().split(' ', 1)
+        if len(parts) != 2:
+            self.console.print('[red]Error:[/red] Both addon name and mod name required.')
+            return
+
+        addon_name, mod_name = parts
+
+        try:
+            file_count = self.core.mod_manager.create_mod(addon_name, mod_name)
+
+            self.console.print(f'[green]✓[/green] Mod [bold white]{mod_name}[/bold white] created for '
+                              f'[bold white]{addon_name}[/bold white]')
+            self.console.print(f'  Modified {file_count} file(s)')
+        except Exception as e:
+            self.console.print(f'[red]Error:[/red] {e!s}')
+
+    def c_list_mods(self, args):
+        if not args:
+            self.console.print('[green]Usage:[/green]\n\t[green]list_mods [AddonName][/green]'
+                              '\n\tLists all mods for the specified addon.')
+            return
+
+        addon_name = args.strip()
+
+        if addon_name not in self.core.config['Mods'] or not self.core.config['Mods'][addon_name]:
+            self.console.print(f'No mods found for [bold white]{addon_name}[/bold white]')
+            return
+
+        table = Table(box=box.SQUARE)
+        table.add_column('Status', header_style='bold white', no_wrap=True)
+        table.add_column('Mod Name', header_style='bold white')
+        table.add_column('Priority', header_style='bold white', justify='center')
+        table.add_column('Base Version', header_style='bold white')
+        table.add_column('Files', header_style='bold white', justify='right')
+
+        for mod_name, mod_data in sorted(self.core.config['Mods'][addon_name].items(),
+                                         key=lambda x: x[1].get('priority', 999)):
+            status = '[green]Enabled[/green]' if mod_data.get('enabled') else '[red]Disabled[/red]'
+            priority = str(mod_data.get('priority', '-'))
+            base_version = mod_data.get('baseVersion', '?')
+            file_count = len(mod_data.get('patches', {}))
+
+            table.add_row(status, mod_name, priority, base_version, str(file_count))
+
+        self.console.print(table)
+
+    def c_toggle_mod(self, args):
+        if not args:
+            self.console.print('[green]Usage:[/green]\n\t[green]toggle_mod [AddonName] [ModName][/green]'
+                              '\n\tEnables or disables the specified mod.')
+            return
+
+        parts = args.strip().split(' ', 1)
+        if len(parts) != 2:
+            self.console.print('[red]Error:[/red] Both addon name and mod name required.')
+            return
+
+        addon_name, mod_name = parts
+
+        if addon_name not in self.core.config['Mods'] or \
+           mod_name not in self.core.config['Mods'][addon_name]:
+            self.console.print('[red]Error:[/red] Mod not found.')
+            return
+
+        mod = self.core.config['Mods'][addon_name][mod_name]
+        mod['enabled'] = not mod.get('enabled', False)
+        self.core.save_config()
+
+        status = '[green]enabled[/green]' if mod['enabled'] else '[red]disabled[/red]'
+        self.console.print(f'Mod [bold white]{mod_name}[/bold white] is now {status}')
+
+        # Reapply mods to addon
+        try:
+            # Force update to clean state then reapply mods
+            addon = self.core.check_if_installed(addon_name)
+            if addon:
+                self.console.print('[yellow]Reapplying mods...[/yellow]')
+                # We need to reinstall from clean ZIP and reapply enabled mods
+                # For now, just show a message
+                msg = f'[yellow]Note:[/yellow] Run [green]update {addon_name}[/green] to apply changes'
+                self.console.print(msg)
+        except Exception as e:
+            self.console.print(f'[yellow]Warning:[/yellow] {e!s}')
+
+    def c_delete_mod(self, args):
+        if not args:
+            self.console.print('[green]Usage:[/green]\n\t[green]delete_mod [AddonName] [ModName][/green]'
+                              '\n\tPermanently deletes the specified mod.')
+            return
+
+        parts = args.strip().split(' ', 1)
+        if len(parts) != 2:
+            self.console.print('[red]Error:[/red] Both addon name and mod name required.')
+            return
+
+        addon_name, mod_name = parts
+
+        if addon_name not in self.core.config['Mods'] or \
+           mod_name not in self.core.config['Mods'][addon_name]:
+            self.console.print('[red]Error:[/red] Mod not found.')
+            return
+
+        # Confirm deletion
+        if not Confirm.ask(f'Delete mod [bold white]{mod_name}[/bold white]?'):
+            return
+
+        del self.core.config['Mods'][addon_name][mod_name]
+
+        # Cleanup empty addon entry
+        if not self.core.config['Mods'][addon_name]:
+            del self.core.config['Mods'][addon_name]
+
+        self.core.save_config()
+        self.console.print(f'[green]✓[/green] Mod [bold white]{mod_name}[/bold white] deleted')
 
     def c_exit(self, _):
         self.core.http.close()

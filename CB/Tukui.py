@@ -25,7 +25,8 @@ class TukuiAddon:
 
     @retry()
     def get_addon(self):
-        self.archive = zipfile.ZipFile(io.BytesIO(self.http.get(self.downloadUrl).content))
+        self.zipContent = self.http.get(self.downloadUrl).content
+        self.archive = zipfile.ZipFile(io.BytesIO(self.zipContent))
         for file in self.archive.namelist():
             if '/' not in os.path.dirname(file):
                 self.directories.append(os.path.dirname(file))
