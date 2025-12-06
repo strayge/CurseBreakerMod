@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 import zipfile
+from typing import Any
 from pathlib import Path
 from difflib import unified_diff
 
@@ -9,10 +10,10 @@ CLEAN_BACKUP_DIR = 'WTF/CurseBreakerClean'
 
 
 class ModManager:
-    def __init__(self, core):
-        self.core = core
+    def __init__(self, core: Any) -> None:
+        self.core: Any = core
 
-    def create_mod(self, addon_name, mod_name):
+    def create_mod(self, addon_name: str, mod_name: str) -> int:
         """Create mod from current addon modifications"""
         # 1. Validate addon exists and is installed
         addon = self.core.check_if_installed(addon_name)
@@ -96,7 +97,7 @@ class ModManager:
         self.core.save_config()
         return len(patches)
 
-    def _get_enabled_mods(self, addon_name):
+    def _get_enabled_mods(self, addon_name: str) -> list[tuple[str, dict[str, Any]]]:
         """Get enabled mods for an addon, sorted by priority"""
         if addon_name not in self.core.config['Mods']:
             return []
@@ -108,7 +109,7 @@ class ModManager:
         enabled_mods.sort(key=lambda x: x[1].get('priority', 999))
         return enabled_mods
 
-    def _generate_diff(self, expected_file, current_file, addon_name, version):
+    def _generate_diff(self, expected_file: Path, current_file: Path, addon_name: str, version: str) -> str | None:
         """Generate unified diff between two files"""
         try:
             with open(expected_file, encoding='utf-8', errors='ignore') as f:
@@ -128,7 +129,7 @@ class ModManager:
         except Exception:
             return None
 
-    def _apply_patch(self, target_file, patch_content):
+    def _apply_patch(self, target_file: Path, patch_content: str) -> None:
         """Apply unified diff patch to file"""
         # Simple patch application - parse and apply unified diff
         with open(target_file, encoding='utf-8', errors='ignore') as f:
@@ -137,7 +138,7 @@ class ModManager:
         # Parse patch
         patch_lines = patch_content.split('\n')
         hunks = []
-        current_hunk = None
+        current_hunk: dict[str, Any] | None = None
 
         for line in patch_lines:
             if line.startswith('@@'):
@@ -183,19 +184,19 @@ class ModManager:
         with open(target_file, 'w', encoding='utf-8', errors='ignore') as f:
             f.writelines(result_lines)
 
-    def _get_lua_xml_files(self, directory):
+    def _get_lua_xml_files(self, directory: Path) -> Any:
         """Get all .lua and .xml files recursively"""
         for ext in ['**/*.lua', '**/*.xml']:
             yield from directory.glob(ext)
 
-    def _get_next_priority(self, addon_name):
+    def _get_next_priority(self, addon_name: str) -> int:
         """Get next available priority number"""
         if addon_name not in self.core.config['Mods']:
             return 1
         priorities = [m.get('priority', 1) for m in self.core.config['Mods'][addon_name].values()]
         return max(priorities, default=0) + 1
 
-    def reapply_all_mods(self, addon_name):
+    def reapply_all_mods(self, addon_name: str) -> list[tuple[str, str]]:
         """Reapply all enabled mods for an addon"""
         addon = self.core.check_if_installed(addon_name)
         if not addon:

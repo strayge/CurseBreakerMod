@@ -3,6 +3,7 @@ import io
 import re
 import httpx
 import zipfile
+from typing import Any
 from pathlib import Path
 from . import retry
 
@@ -13,11 +14,13 @@ GAME_VERSION_TYPE_MAP = {'retail': 517, 'classic': 67408, 'mop': 79434}
 
 class CurseForgeAddon:
     @retry()
-    def __init__(self, url, checkcache, clienttype, allowdev, http):
+    def __init__(
+        self, url: str, checkcache: dict[str, Any], clienttype: str, allowdev: int, http: httpx.Client
+    ) -> None:
         slug = url.split('/')[-1]
-        self.http = http
-        self.clientType = clienttype
-        self.allowDev = allowdev
+        self.http: httpx.Client = http
+        self.clientType: str = clienttype
+        self.allowDev: int = allowdev
 
         if slug in checkcache:
             self.payload = checkcache[slug]
@@ -38,17 +41,18 @@ class CurseForgeAddon:
 
             self.payload = data[0]
 
-        self.name = self.payload['name'].strip().strip('\u200b')
-        self.changelogUrl = self.payload['links']['websiteUrl']
-        self.author = [author['name'] for author in self.payload['authors']]
-        self.downloadUrl = None
-        self.currentVersion = None
-        self.uiVersion = None
-        self.archive = None
-        self.directories = []
+        self.name: str = self.payload['name'].strip().strip('\u200b')
+        self.changelogUrl: str = self.payload['links']['websiteUrl']
+        self.author: list[str] = [author['name'] for author in self.payload['authors']]
+        self.downloadUrl: str | None = None
+        self.currentVersion: str | None = None
+        self.uiVersion: str | None = None
+        self.archive: zipfile.ZipFile | None = None
+        self.directories: list[str] = []
+        self.zipContent: bytes = b''
         self.get_current_version()
 
-    def get_current_version(self):
+    def get_current_version(self) -> None:
         game_version_type_id = GAME_VERSION_TYPE_MAP.get(self.clientType)
         if not game_version_type_id:
             raise RuntimeError(f'{self.name}.\nUnsupported client type: {self.clientType}')
@@ -84,7 +88,7 @@ class CurseForgeAddon:
         self.uiVersion = selected_file_index['gameVersion']
 
     @retry()
-    def get_addon(self):
+    def get_addon(self) -> None:
         self.zipContent = self.http.get(self.downloadUrl).content
         self.archive = zipfile.ZipFile(io.BytesIO(self.zipContent))
         for file in self.archive.namelist():
@@ -94,20 +98,20 @@ class CurseForgeAddon:
         if not self.directories:
             raise RuntimeError(f'{self.name}.\nProject package is corrupted or incorrectly packaged.')
 
-    def install(self, path):
+    def install(self, path: Path) -> None:
         self.archive.extractall(path)
 
 
 class CurseForgeFingerprintScanner:
-    def __init__(self, directory):
-        self.directory = directory
-        self.filesToHash = []
-        self.filesToParse = []
-        self.individualFingerprints = []
-        self.folderFingerprint = None
+    def __init__(self, directory: Path) -> None:
+        self.directory: Path = directory
+        self.filesToHash: list[Path] = []
+        self.filesToParse: list[Path] = []
+        self.individualFingerprints: list[int] = []
+        self.folderFingerprint: int | None = None
         self.parse()
 
-    def parse_file(self, target):
+    def parse_file(self, target: list[Path]) -> None:
         for f in target:
             if f.is_file():
                 self.filesToHash.append(f)
@@ -127,12 +131,12 @@ class CurseForgeFingerprintScanner:
                             newfilestoparse = [Path(f.parent, element) for element in newfilestoparse]
                             self.parse_file(newfilestoparse)
 
-    def normalize_content(self, content):
+    def normalize_content(self, content: bytes) -> bytes:
         """Normalize content by removing whitespace characters for fingerprinting."""
         # Whitespace characters to skip: tab (9), newline (10), carriage return (13), space (32)
         return bytes(b for b in content if b not in [9, 10, 13, 32])
 
-    def compute_hash(self, data):
+    def compute_hash(self, data: bytes) -> int:
         """
         Compute MurmurHash2 exactly as CurseForge does.
         Based on: https://github.com/WowUp/WowUp/blob/master/wowup-electron/native/curse.cc
@@ -173,7 +177,7 @@ class CurseForgeFingerprintScanner:
         num6 = ((hash_val ^ (hash_val >> 13)) * multiplex) & 0xFFFFFFFF
         return (num6 ^ (num6 >> 15)) & 0xFFFFFFFF
 
-    def compute_fingerprint(self, file_path):
+    def compute_fingerprint(self, file_path: Path) -> int | None:
         """Compute MurmurHash2 fingerprint for a file."""
         try:
             with open(file_path, 'rb') as f:
@@ -182,7 +186,7 @@ class CurseForgeFingerprintScanner:
         except Exception:
             return None
 
-    def parse(self):
+    def parse(self) -> None:
         for f in list(self.directory.glob('*')):
             if f.name.lower().endswith('.toc'):
                 self.filesToParse.append(f)
@@ -204,16 +208,16 @@ class CurseForgeFingerprintScanner:
             # Use custom hash implementation for folder fingerprint too
             self.folderFingerprint = self.compute_hash(fingerprints_string.encode('ascii'))
 
-    def get_individual_fingerprints(self):
+    def get_individual_fingerprints(self) -> list[int]:
         """Return list of individual file fingerprints (sorted)"""
         return self.individualFingerprints
 
-    def get_folder_fingerprint(self):
+    def get_folder_fingerprint(self) -> int | None:
         """Return computed folder fingerprint (for caching/comparison)"""
         return self.folderFingerprint
 
 
-def scan_directory_fingerprints(path, directory):
+def scan_directory_fingerprints(path: Path, directory: str) -> tuple[str, int | None]:
     """
     Scan a directory and compute its CurseForge fingerprint.
 
@@ -229,7 +233,9 @@ def scan_directory_fingerprints(path, directory):
     return directory, folder_fingerprint
 
 
-def detect_curseforge_addons(http, folder_fingerprints, check_if_installed_dirs):
+def detect_curseforge_addons(
+    http: httpx.Client, folder_fingerprints: dict[str, int | None], check_if_installed_dirs: Any
+) -> tuple[list[str], list[str], list[str], set[str]]:
     """
     Detect CurseForge addons using fingerprint matching.
 
@@ -241,10 +247,10 @@ def detect_curseforge_addons(http, folder_fingerprints, check_if_installed_dirs)
     Returns:
         Tuple of (names, slugs, namesinstalled, matched_dirs)
     """
-    names = []
-    namesinstalled = []
-    slugs = []
-    cf_matched_dirs = set()
+    names: list[str] = []
+    namesinstalled: list[str] = []
+    slugs: list[str] = []
+    cf_matched_dirs: set[str] = set()
 
     # Flatten fingerprints for API call
     all_fingerprints = list(folder_fingerprints.values())
@@ -263,8 +269,8 @@ def detect_curseforge_addons(http, folder_fingerprints, check_if_installed_dirs)
         cf_data = cf_payload.json()['data']
 
         # Process exact matches
-        mod_to_dirs_exact = {}  # {modId: {dir1, dir2, ...}}
-        exact_mod_ids = set()
+        mod_to_dirs_exact: dict[int, set[str]] = {}  # {modId: {dir1, dir2, ...}}
+        exact_mod_ids: set[int] = set()
 
         if 'exactMatches' in cf_data:
             for match in cf_data['exactMatches']:
@@ -287,7 +293,7 @@ def detect_curseforge_addons(http, folder_fingerprints, check_if_installed_dirs)
                                 break
 
         # Process partial matches (deduplicate against exact matches)
-        mod_to_dirs_partial = {}  # {modId: {dir1, dir2, ...}}
+        mod_to_dirs_partial: dict[int, set[str]] = {}  # {modId: {dir1, dir2, ...}}
 
         if 'partialMatches' in cf_data:
             for match in cf_data['partialMatches']:

@@ -2,6 +2,8 @@ import os
 import io
 import httpx
 import zipfile
+from typing import Any
+from pathlib import Path
 from datetime import datetime
 from dateutil import parser
 from dateutil.tz import tzutc
@@ -11,12 +13,15 @@ from . import retry, APIAuth
 
 class WagoAddonsAddon:
     @retry()
-    def __init__(self, url, checkcache, clienttype, clientversion, allowdev, apikey, http):
+    def __init__(
+        self, url: str, checkcache: dict[str, Any], clienttype: str,
+        clientversion: str, allowdev: int, apikey: str, http: httpx.Client
+    ) -> None:
         project = url.replace('https://addons.wago.io/addons/', '')
-        self.http = http
-        self.apiKey = apikey
-        self.clientType = clienttype
-        self.clientVersion = clientversion
+        self.http: httpx.Client = http
+        self.apiKey: str = apikey
+        self.clientType: str = clienttype
+        self.clientVersion: str = clientversion
         if project in checkcache:
             self.payload = checkcache[project]
             self.payload['display_name'] = self.payload['name']
@@ -47,18 +52,19 @@ class WagoAddonsAddon:
                     self.payload = self.payload.json()
                 except (StopIteration, JSONDecodeError) as e:
                     raise RuntimeError(f'{url}\nThis might be a temporary issue with Wago Addons API.') from e
-        self.name = self.payload['display_name'].strip().strip('\u200b')
-        self.allowDev = allowdev
-        self.downloadUrl = None
-        self.changelogUrl = None
-        self.currentVersion = None
-        self.uiVersion = None
-        self.archive = None
-        self.directories = []
-        self.author = self.payload['authors']
+        self.name: str = self.payload['display_name'].strip().strip('\u200b')
+        self.allowDev: int = allowdev
+        self.downloadUrl: str | None = None
+        self.changelogUrl: str | None = None
+        self.currentVersion: str | None = None
+        self.uiVersion: str | None = None
+        self.archive: zipfile.ZipFile | None = None
+        self.directories: list[str] = []
+        self.author: list[str] = self.payload['authors']
+        self.zipContent: bytes = b''
         self.get_current_version()
 
-    def get_current_version(self):
+    def get_current_version(self) -> None:
         if len(self.payload['recent_release']) == 0:
             raise RuntimeError(f'{self.name}.\nFailed to find release for your client version.')
 
@@ -96,7 +102,7 @@ class WagoAddonsAddon:
         self.currentVersion = release['label']
 
     @retry()
-    def get_addon(self):
+    def get_addon(self) -> None:
         self.zipContent = self.http.get(self.downloadUrl, auth=APIAuth('Bearer', self.apiKey)).content
         self.archive = zipfile.ZipFile(io.BytesIO(self.zipContent))
         for file in self.archive.namelist():
@@ -106,5 +112,5 @@ class WagoAddonsAddon:
         if not self.directories:
             raise RuntimeError(f'{self.name}.\nProject package is corrupted or incorrectly packaged.')
 
-    def install(self, path):
+    def install(self, path: Path) -> None:
         self.archive.extractall(path)

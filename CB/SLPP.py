@@ -52,14 +52,14 @@ _sentinel = _Sentinel()
 
 
 class _SLPP:
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         self._iter_text = iter(text)
         self._next()
 
-    def _next(self):
+    def _next(self) -> None:
         self.c = next(self._iter_text, _sentinel)
 
-    def _next_eq(self, includes: Container[str]):
+    def _next_eq(self, includes: Container[str]) -> None:
         if self.c not in includes:
             for c in self._iter_text:
                 if c in includes:
@@ -68,7 +68,7 @@ class _SLPP:
             else:
                 self.c = _sentinel
 
-    def _next_not_eq(self, excludes: Container[str]):
+    def _next_not_eq(self, excludes: Container[str]) -> None:
         if self.c in excludes:
             for c in self._iter_text:
                 if c not in excludes:
@@ -77,7 +77,7 @@ class _SLPP:
             else:
                 self.c = _sentinel
 
-    def _decode_table(self):
+    def _decode_table(self) -> dict[Any, Any] | list[Any]:
         table: dict[Any, Any] | list[Any] = {}
         idx = 0
 
@@ -139,7 +139,7 @@ class _SLPP:
                     idx += 1
                     table[idx] = item
 
-    def _decode_string(self):
+    def _decode_string(self) -> str:
         s = ''
         start = self.c
         end = None
@@ -173,7 +173,7 @@ class _SLPP:
 
         return s
 
-    def _decode_bare_word(self):
+    def _decode_bare_word(self) -> bool | None | str:
         s = self.c
         for c in self._iter_text:
             new_s = s + c
@@ -192,8 +192,8 @@ class _SLPP:
             return None
         return s
 
-    def _decode_number(self):
-        def get_digits():
+    def _decode_number(self) -> int | float | None:
+        def get_digits() -> str:
             n = ''
 
             for c in self._iter_text:
@@ -249,7 +249,7 @@ class _SLPP:
         except ValueError:
             return float(n)
 
-    def decode(self):
+    def decode(self) -> Any:
         self._next_not_eq(WHITESPACE)
         if not self.c:
             raise ParseError('input is empty')

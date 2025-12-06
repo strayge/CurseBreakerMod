@@ -16,6 +16,7 @@ from collections import Counter
 from checksumdir import dirhash
 from urllib.parse import quote_plus
 from rich.progress import Progress, BarColumn
+from typing import Any
 from . import retry, APIAuth, __version__
 from .Tukui import TukuiAddon
 from .GitHub import GitHubAddon, GitHubAddonRaw
@@ -27,34 +28,39 @@ from .ModManager import CLEAN_BACKUP_DIR, ModManager
 
 
 class Core:
-    def __init__(self):
-        self.http = httpx.Client(headers={'User-Agent': f'CurseBreaker/{__version__}'},
-                                 timeout=10, http2=True, follow_redirects=True)
-        self.path = Path('Interface/AddOns')
-        self.configPath = Path('WTF/CurseBreaker.json')
-        self.clientType = None
-        self.config = None
-        self.masterConfig = None
-        self.dirIndex = None
-        self.wowiCache = {}
-        self.wagoCache = {}
-        self.githubCache = {}
-        self.githubPackagerCache = {}
-        self.wagoIdCache = None
-        self.tukuiCache = None
-        self.checksumCache = {}
-        self.cfCache = {}
-        self.mod_manager = ModManager(self)
+    def __init__(self) -> None:
+        self.http: httpx.Client = httpx.Client(
+            headers={'User-Agent': f'CurseBreaker/{__version__}'},
+            timeout=10,
+            http2=True,
+            follow_redirects=True
+        )
+        self.path: Path = Path('Interface/AddOns')
+        self.configPath: Path = Path('WTF/CurseBreaker.json')
+        self.clientType: str | None = None
+        self.config: dict[str, Any] = None
+        self.masterConfig: dict[str, Any] = None
+        self.dirIndex: dict[str, Any] | None = None
+        self.wowiCache: dict[str, Any] = {}
+        self.wagoCache: dict[str, Any] = {}
+        self.githubCache: dict[str, Any] = {}
+        self.githubPackagerCache: dict[str, Any] = {}
+        self.wagoIdCache: dict[str, Any] | None = None
+        self.tukuiCache: dict[str, Any] | None = None
+        self.checksumCache: dict[str, bool] = {}
+        self.cfCache: dict[str, Any] = {}
+        self.mod_manager: ModManager = ModManager(self)
 
-    def init_master_config(self):
+    def init_master_config(self) -> None:
         try:
             self.masterConfig = json.load(gzip.open(io.BytesIO(
                 self.http.get('https://cursebreaker.acidweb.dev/config-v2.json.gz').content)))
         except (StopIteration, UnicodeDecodeError, json.JSONDecodeError, httpx.RequestError) as e:
+            self.masterConfig = {}
             raise RuntimeError('Failed to fetch the master config file. '
                                'Check your connectivity to Google Cloud.') from e
 
-    def init_config(self):
+    def init_config(self) -> None:
         if os.path.isfile('CurseBreaker.json'):
             shutil.move('CurseBreaker.json', 'WTF')
         if os.path.isfile(Path('WTF/CurseBreaker.cache')):
@@ -88,11 +94,11 @@ class Core:
             os.mkdir('WTF-Backup')
         self.update_config()
 
-    def save_config(self):
+    def save_config(self) -> None:
         with open(self.configPath, 'w') as outfile:
             json.dump(self.config, outfile, sort_keys=True, indent=4, separators=(',', ': '))
 
-    def update_config(self):
+    def update_config(self) -> None:
         if 'Version' in self.config.keys() and self.config['Version'] == __version__:
             return
         urlupdate = {'elvui-classic': 'elvui', 'elvui-classic:dev': 'elvui:dev', 'tukui-classic': 'tukui',
@@ -160,25 +166,27 @@ class Core:
         self.config['Version'] = __version__
         self.save_config()
 
-    def check_if_installed(self, url):
+    def check_if_installed(self, url: str) -> dict[str, Any] | None:
         for addon in self.config['Addons']:
             if url in (addon['URL'], addon['Name']):
                 return addon
+        return None
 
-    def check_if_installed_dirs(self, directories):
+    def check_if_installed_dirs(self, directories: list[str]) -> dict[str, Any] | None:
         for addon in self.config['Addons']:
             if Counter(directories) == Counter(addon['Directories']):
                 return addon
+        return None
 
-    def check_if_dev(self, url):
+    def check_if_dev(self, url: str) -> int:
         if addon := self.check_if_installed(url):
             return addon['Development'] if 'Development' in addon.keys() else 0
         else:
             return 0
 
-    def check_if_overlap(self):
-        directories = []
-        found = set()
+    def check_if_overlap(self) -> str | bool:
+        directories: list[str] = []
+        found: set[str] = set()
         for addon in self.config['Addons']:
             directories = directories + addon['Directories']
         if dupes := [x for x in directories if x in found or found.add(x)]:
@@ -191,16 +199,16 @@ class Core:
         else:
             return False
 
-    def check_if_blocked(self, addon):
+    def check_if_blocked(self, addon: dict[str, Any] | None) -> bool:
         return bool(addon and 'Block' in addon.keys())
 
-    def check_if_dev_global(self):
+    def check_if_dev_global(self) -> int:
         for addon in self.config['Addons']:
             if addon['URL'].startswith('https://addons.wago.io/addons/') and 'Development' in addon.keys():
                 return addon['Development']
         return 0
 
-    def check_if_from_gh(self):
+    def check_if_from_gh(self) -> bool:
         if self.config['GHAPIKey'] != '':
             return False
         count = 0
@@ -209,12 +217,12 @@ class Core:
                 count += 1
         return count > 4
 
-    def cleanup(self, directories):
+    def cleanup(self, directories: list[str]) -> None:
         if len(directories) > 0:
             for directory in directories:
                 shutil.rmtree(self.path / directory, ignore_errors=True)
 
-    def _save_clean_zip(self, addon_name, version, zip_content):
+    def _save_clean_zip(self, addon_name: str, version: str, zip_content: bytes) -> None:
         """Save original downloaded ZIP file for mod diffing"""
         clean_dir = Path(f'{CLEAN_BACKUP_DIR}/{addon_name}')
         clean_dir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +231,7 @@ class Core:
         with open(zip_path, 'wb') as f:
             f.write(zip_content)
 
-    def _cleanup_old_clean_zips(self, addon_name):
+    def _cleanup_old_clean_zips(self, addon_name: str) -> None:
         """Remove old clean ZIPs that are no longer needed"""
         clean_dir = Path(f'{CLEAN_BACKUP_DIR}/{addon_name}')
         if not clean_dir.exists():
@@ -255,7 +263,7 @@ class Core:
         if not list(clean_dir.glob('*')):
             clean_dir.rmdir()
 
-    def parse_url(self, url):
+    def parse_url(self, url: str) -> Any:
         if url.startswith('https://addons.wago.io/addons/'):
             return WagoAddonsAddon(url, self.wagoCache,
                                    'retail' if url in self.config['IgnoreClientVersion'].keys() else self.clientType,
@@ -288,7 +296,7 @@ class Core:
         else:
             raise NotImplementedError('Provided URL is not supported.')
 
-    def parse_url_source(self, url):
+    def parse_url_source(self, url: str) -> tuple[str, str | None]:
         if url.startswith('https://addons.wago.io/addons/'):
             return 'Wago', url
         elif url.startswith('https://www.wowinterface.com/downloads/'):
@@ -306,7 +314,7 @@ class Core:
         else:
             return '?', None
 
-    def parse_new_addon(self, ignore, url):
+    def parse_new_addon(self, ignore: bool, url: str) -> tuple[bool, str, str]:
         if ignore:
             self.config['IgnoreClientVersion'][url] = True
         new = self.parse_url(url)
@@ -329,7 +337,7 @@ class Core:
         self.save_config()
         return True, new.name, new.currentVersion
 
-    def add_addon(self, url, ignore):
+    def add_addon(self, url: str, ignore: bool) -> tuple[bool, str, str]:
         if url.endswith(':'):
             raise NotImplementedError('Provided URL is not supported.')
         elif 'wago-app://' in url:
@@ -349,7 +357,7 @@ class Core:
         else:
             return self.parse_new_addon(ignore, url)
 
-    def del_addon(self, url, keep):
+    def del_addon(self, url: str, keep: bool) -> tuple[str | None, str | None]:
         if old := self.check_if_installed(url):
             if not keep:
                 self.cleanup(old['Directories'])
@@ -365,11 +373,13 @@ class Core:
 
             self.save_config()
             return old['Name'], old['Version']
-        return False, False
+        return None, None
 
-    def update_addon(self, url, update, force):
+    def update_addon(
+        self, url: str, update: bool, force: bool
+    ) -> tuple[str, list[str], str | None, str | None, str | None, bool, bool, str, str | None, str | None, int | None]:
         if not (old := self.check_if_installed(url)):
-            return url, [], False, False, None, False, False, '?', None, None, None
+            return url, [], None, None, None, False, False, '?', None, None, None
         dev = self.check_if_dev(old['URL'])
         blocked = self.check_if_blocked(old)
         oldversion = old['Version']
@@ -421,7 +431,7 @@ class Core:
         return new.name, new.author, new.currentVersion, oldversion, new.uiVersion, modified, blocked, source, \
             sourceurl, new.changelogUrl, dev
 
-    def check_checksum(self, addon, pbar=None):
+    def check_checksum(self, addon: dict[str, Any], pbar: Any = None) -> tuple[str, bool]:
         checksums = {}
         for directory in addon['Directories']:
             if os.path.isdir(self.path / directory):
@@ -430,17 +440,17 @@ class Core:
             pbar.update(0, advance=0.5, refresh=True)
         return addon['URL'], len(checksums.items() & addon['Checksums'].items()) != len(addon['Checksums'])
 
-    def bulk_check_checksum(self, addons, pbar):
+    def bulk_check_checksum(self, addons: list[dict[str, Any]], pbar: Any) -> None:
         self.checksumCache = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
             workers = []
             for addon in addons:
                 workers.append(executor.submit(self.check_checksum, addon, pbar))
             for future in concurrent.futures.as_completed(workers):
-                output = future.result()
-                self.checksumCache[output[0]] = output[1]
+                url, checksums_valid = future.result()
+                self.checksumCache[url] = checksums_valid
 
-    def dev_toggle(self, url):
+    def dev_toggle(self, url: str) -> int | None:
         if url == 'global':
             state = self.check_if_dev_global()
             for addon in self.config['Addons']:
@@ -471,7 +481,7 @@ class Core:
                     return -1
             return None
 
-    def block_toggle(self, url):
+    def block_toggle(self, url: str) -> bool | None:
         if addon := self.check_if_installed(url):
             state = self.check_if_blocked(addon)
             if state:
@@ -482,7 +492,7 @@ class Core:
             return not state
         return None
 
-    def backup_check(self):
+    def backup_check(self) -> bool:
         if not self.config['Backup']['Enabled']:
             return False
         if os.path.isfile(Path('WTF-Backup', f'{datetime.datetime.now().strftime("%d%m%y")}.zip')):
@@ -493,7 +503,7 @@ class Core:
             os.remove(oldest_file)
         return True
 
-    def backup_wtf(self, console):
+    def backup_wtf(self, console: Any) -> None:
         archive = Path('WTF-Backup', f'{datetime.datetime.now().strftime("%d%m%y")}.zip')
         if os.path.isfile(archive):
             suffix = 1
@@ -519,11 +529,11 @@ class Core:
                             progress.update(task, advance=1, refresh=True)
         zipf.close()
 
-    def find_orphans(self):
-        orphanedaddon = []
-        orphaneconfig = []
-        directories = []
-        directoriesspecial = []
+    def find_orphans(self) -> tuple[list[str], list[str]]:
+        orphanedaddon: list[str] = []
+        orphaneconfig: list[str] = []
+        directories: list[str] = []
+        directoriesspecial: list[str] = []
         ignored = ['.DS_Store', '.git']
         special = ['+Wowhead_Looter', 'CurseBreakerCompanion', 'SharedMedia_MyMedia', 'TradeSkillMaster_AppHelper']
         for addon in self.config['Addons']:
@@ -548,7 +558,7 @@ class Core:
                         orphaneconfig.append(str(Path(root, f))[4:])
         return orphanedaddon, orphaneconfig
 
-    def search(self, query):
+    def search(self, query: str) -> list[str]:
         if self.config['WAAAPIKey'] == '':
             raise RuntimeError('This feature only searches the database of the Wago Addons. '
                                'So their API key is required.\n'
@@ -559,7 +569,7 @@ class Core:
         payload = payload.json()
         return [result['website_url'] for result in payload['data']]
 
-    def create_reg(self):
+    def create_reg(self) -> None:
         with open('CurseBreaker.reg', 'w') as outfile:
             outfile.write('Windows Registry Editor Version 5.00\n\n'
                           '[HKEY_CURRENT_USER\\Software\\Classes\\wago-app]\n'
@@ -581,7 +591,7 @@ class Core:
                           '[HKEY_CURRENT_USER\\Software\\Classes\\weakauras-companion\\shell\\open\\command]\n'
                           '@="\\"' + os.path.abspath(sys.executable).replace('\\', '\\\\') + '\\" \\"%1\\""')
 
-    def parse_wagoapp_payload(self, url):
+    def parse_wagoapp_payload(self, url: str) -> str:
         if self.config['WAAAPIKey'] == '':
             raise RuntimeError('This feature requires the Wago Addons API key.\n'
                                'It can be obtained here: https://addons.wago.io/patreon')
@@ -592,7 +602,7 @@ class Core:
         payload = payload.json()
         return f'https://addons.wago.io/addons/{payload["slug"]}'
 
-    def bulk_check(self, addons):
+    def bulk_check(self, addons: list[dict[str, Any]]) -> None:
         ids_wowi = []
         ids_wago = []
         ids_gh = []
@@ -617,19 +627,19 @@ class Core:
         if ids_gh and self.config['GHAPIKey'] != '':
             self.bulk_gh_check(ids_gh)
 
-    def bulk_wowi_check(self, ids):
+    def bulk_wowi_check(self, ids: list[str]) -> None:
         payload = self.http.get(f'https://api.mmoui.com/v3/game/WOW/filedetails/{",".join(ids)}.json',
                                 timeout=15).json()
         if 'ERROR' not in payload:
             for addon in payload:
                 self.wowiCache[str(addon['UID'])] = addon
 
-    def bulk_wago_check(self, ids):
+    def bulk_wago_check(self, ids: list[dict[str, str]]) -> None:
         if not self.wagoIdCache:
-            self.wagoIdCache = self.http.get(f'https://addons.wago.io/api/data/slugs?game_version={self.clientType}',
+            response = self.http.get(f'https://addons.wago.io/api/data/slugs?game_version={self.clientType}',
                                              timeout=15)
-            self.parse_wagoaddons_error(self.wagoIdCache.status_code)
-            self.wagoIdCache = self.wagoIdCache.json()
+            self.parse_wagoaddons_error(response.status_code)
+            self.wagoIdCache = response.json()
         for addon in ids:
             if addon['slug'] in self.wagoIdCache['addons']:
                 addon['id'] = self.wagoIdCache['addons'][addon['slug']]['id']
@@ -644,7 +654,7 @@ class Core:
                     self.wagoCache[addon['slug']] = payload['addons'][addonid]
                     break
 
-    def bulk_cf_check(self, ids):
+    def bulk_cf_check(self, ids: list[dict[str, Any]]) -> None:
         mod_ids = [addon['id'] for addon in ids if addon['id'] != 0]
         if not mod_ids:
             return
@@ -664,11 +674,11 @@ class Core:
         except (KeyError, TypeError):
             pass
 
-    def bulk_gh_check_worker(self, node_id, url):
+    def bulk_gh_check_worker(self, node_id: str, url: str) -> tuple[str, Any]:
         return node_id, self.http.get(url, headers={'Accept': 'application/octet-stream'},
                                       auth=APIAuth('Bearer', self.config['GHAPIKey'])).json()
 
-    def bulk_gh_check(self, ids):
+    def bulk_gh_check(self, ids: list[str]) -> None:
         query = ('{\n  "query": "{ search( type: REPOSITORY query: \\"' + f'repo:{" repo:".join(ids)}' + ' fork:true\\"'
                  ' first: 100 ) { nodes { ... on Repository { nameWithOwner releases(first: 15) { nodes { tag_name: tag'
                  'Name name html_url: url draft: isDraft prerelease: isPrerelease assets: releaseAssets(first: 100) { n'
@@ -705,11 +715,11 @@ class Core:
                     self.githubPackagerCache[output[0]] = output[1]
 
     @retry(custom_error='Failed to parse Tukui API data')
-    def bulk_tukui_check(self):
+    def bulk_tukui_check(self) -> None:
         if not self.tukuiCache:
             self.tukuiCache = self.http.get('https://api.tukui.org/v1/addons').json()
 
-    def detect_accounts(self):
+    def detect_accounts(self) -> list[str]:
         if not os.path.isdir(Path('WTF/Account')):
             return []
         accounts = os.listdir(Path('WTF/Account'))
@@ -721,7 +731,7 @@ class Core:
         return accounts_processed
 
     # TODO: Refactor to be smarter
-    def detect_addons(self):
+    def detect_addons(self) -> tuple[list[str], list[str], list[str]]:
         names = []
         namesinstalled = []
         slugs = []
@@ -740,7 +750,7 @@ class Core:
 
         # Scan directories for fingerprints in parallel
         from rich.progress import Progress, BarColumn
-        folder_fingerprints = {}  # {directory: fingerprint}
+        folder_fingerprints: dict[str, int | None] = {}  # {directory: fingerprint}
 
         with Progress('{task.completed}/{task.total}', '|', BarColumn(bar_width=None), '|',
                       auto_refresh=False) as progress:
@@ -801,7 +811,7 @@ class Core:
 
         return names, slugs, namesinstalled
 
-    def export_addons(self):
+    def export_addons(self) -> str:
         addons = []
         for addon in self.config['Addons']:
             if addon['URL'].startswith('https://addons.wago.io/addons/'):
@@ -817,7 +827,7 @@ class Core:
             addons.append(url)
         return f'install {",".join(sorted(addons))}'
 
-    def parse_wagoaddons_error(self, code):
+    def parse_wagoaddons_error(self, code: int) -> None:
         if code == 401:
             raise RuntimeError('Wago Addons API key is missing or incorrect.')
         elif code == 403:

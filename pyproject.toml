@@ -15,6 +15,7 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
     "rich>=13.9.4",
     "rich-pixels>=3.0.1",
+    "basedpyright>=1.35.0",
 ]
 
 [dependency-groups]
@@ -26,3 +27,10 @@ dev = [
 
 [tool.uv.sources]
 checksumdir = { git = "https://github.com/idahogray/checksumdir", branch = "replace-pkg-resources" }
+
+[tool.basedpyright]
+reportImplicitStringConcatenation = false
+reportExplicitAny = false
+reportAny = false
+reportUnusedCallResult = false
+reportUnknownArgumentType = false

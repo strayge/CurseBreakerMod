@@ -40,31 +40,32 @@ from rich.traceback import Traceback, install
 from prompt_toolkit import PromptSession, HTML
 from prompt_toolkit.completion import WordCompleter, NestedCompleter
 from packaging.version import Version
+from typing import Any
 from CB import __version__
 from CB.Core import Core
 from CB.Wago import WagoUpdater
-from CB.Compat import clear, set_terminal_title, set_terminal_size, KBHit
+from CB.Compat import IS_WINDOWS, clear, set_terminal_title, set_terminal_size, KBHit
 from CB.Resources import LOGO, HEADLESS_TERMINAL_THEME
 
-if platform.system() == 'Windows':
+if IS_WINDOWS:
     from ctypes import windll, wintypes
 
 
 class TUI:
-    def __init__(self):
+    def __init__(self) -> None:
         if 'CURSEBREAKER_DEBUG' in os.environ:
             logging.basicConfig(level=logging.INFO, format='%(message)s', datefmt='[%X]', handlers=[RichHandler()])
-        self.core = Core()
-        self.session = PromptSession(reserve_space_for_menu=6, complete_in_thread=True)
-        self.headless = False
-        self.console = None
-        self.table = None
-        self.slugs = None
-        self.completer = None
-        self.os = platform.system()
+        self.core: Core = Core()
+        self.session: PromptSession[str] = PromptSession(reserve_space_for_menu=6, complete_in_thread=True)
+        self.headless: bool = False
+        self.console: Console = None
+        self.table: Table = None
+        self.slugs: dict[str, list[str]] = None
+        self.completer: NestedCompleter | None = None
+        self.os: str = platform.system()
         install()
 
-    def start(self):  # sourcery skip: low-code-quality
+    def start(self) -> None:  # sourcery skip: low-code-quality
         # Check if headless mode was requested
         if len(sys.argv) == 2 and sys.argv[1].lower() == 'headless':
             self.headless = True
@@ -121,7 +122,7 @@ class TUI:
                 self.core.config['WAStash'].append(sys.argv[1].strip().replace('weakauras-companion://wago/push/', ''))
                 self.core.config['WAStash'] = list(set(self.core.config['WAStash']))
                 self.core.save_config()
-                self.c_wago_update(_, flush=False)
+                self.c_wago_update(None, flush=False)
             except Exception as e:
                 self.handle_exception(e)
             self.handle_shutdown()
@@ -152,7 +153,7 @@ class TUI:
                 keypress = self.handle_keypress('Automatic update of all addons will start in {} seconds.\nPress any bu'
                                                 'tton to enter interactive mode.', 5, True)
             else:
-                keypress = False
+                keypress = None
             if not keypress:
                 if not self.headless:
                     self.print_header()
@@ -205,14 +206,16 @@ class TUI:
         # Prompt session
         while True:
             try:
-                command = self.session.prompt(HTML('<ansibrightgreen>CB></ansibrightgreen> '), completer=self.completer)
+                command_str = self.session.prompt(
+                    HTML('<ansibrightgreen>CB></ansibrightgreen> '), completer=self.completer
+                )
             except KeyboardInterrupt:
                 continue
             except EOFError:
                 self.core.http.close()
                 break
             else:
-                command = command.split(' ', 1)
+                command = command_str.split(' ', 1)
                 if getattr(self, f'c_{command[0].lower()}', False):
                     try:
                         self.setup_table()
@@ -223,12 +226,12 @@ class TUI:
                 else:
                     self.console.print('Command not found.')
 
-    def _auto_update_cleanup(self):
+    def _auto_update_cleanup(self) -> None:
         self.print_log()
         self.core.http.close()
         self.handle_keypress('Press any button to continue...', 0, False)
 
-    def _auto_update_install(self, url, changelog):
+    def _auto_update_install(self, url: str, changelog: str) -> None:
         self.console.print('[green]Updating CurseBreaker...[/green]')
         shutil.move(sys.executable, f'{sys.executable}.old')
         payload = self.core.http.get(url)
@@ -248,7 +251,7 @@ class TUI:
         subprocess.call([sys.executable, *sys.argv[1:]], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
         sys.exit(0)
 
-    def auto_update(self):
+    def auto_update(self) -> None:
         if not getattr(sys, 'frozen', False) or 'CURSEBREAKER_VARDEXMODE' in os.environ:
             return
         try:
@@ -278,7 +281,7 @@ class TUI:
             self._auto_update_cleanup()
             sys.exit(1)
 
-    def motd_parser(self):
+    def motd_parser(self) -> None:
         if detect_legacy_windows():
             self.console.print(Panel('The old Windows terminal was detected. Use of the new Windows Terminal is highly '
                                      'recommended. https://aka.ms/terminal', title='WARNING', border_style='red'))
@@ -290,7 +293,7 @@ class TUI:
                                          border_style='red'))
                 self.console.print('')
 
-    def handle_exception(self, e, table=True):
+    def handle_exception(self, e: Exception | list[Exception], table: bool = True) -> None:
         if self.table.row_count > 1 and table:
             self.console.print(self.table)
         if getattr(sys, 'frozen', False) and 'CURSEBREAKER_DEBUG' not in os.environ:
@@ -306,10 +309,10 @@ class TUI:
             self.console.print(Traceback.from_exception(exc_type=e.__class__, exc_value=e,
                                                         traceback=e.__traceback__, width=width))
 
-    def _handle_keypress_console(self, count, msg, countdown=None):
+    def _handle_keypress_console(self, count: int, msg: str, countdown: Any = None) -> bytes | str | None:
         kb = KBHit()
         starttime = time.time()
-        keypress = False
+        keypress: bytes | str | None = None
         while True:
             if kb.kbhit():
                 keypress = kb.getch()
@@ -322,9 +325,9 @@ class TUI:
         kb.set_normal_term()
         return keypress
 
-    def handle_keypress(self, msg, count, live):
+    def handle_keypress(self, msg: str, count: int, live: bool) -> bytes | str | None:
         if self.headless:
-            return False
+            return None
         if live:
             with Live(Text(msg.format(count)), console=self.console, refresh_per_second=2) as countdown:
                 keypress = self._handle_keypress_console(count, msg, countdown)
@@ -333,7 +336,7 @@ class TUI:
             keypress = self._handle_keypress_console(count, msg)
         return keypress
 
-    def handle_shutdown(self, message=''):
+    def handle_shutdown(self, message: str = '') -> None:
         self.core.http.close()
         if not message:
             self.handle_keypress('\nWaiting for {} seconds, press any button to continue...', 5, True)
@@ -343,7 +346,7 @@ class TUI:
             self.handle_keypress('Press any button to continue...', 0, False)
             sys.exit(1)
 
-    def print_header(self):
+    def print_header(self) -> None:
         if self.headless:
             self.console.print(f'[bold green]CurseBreaker[/bold green] [bold red]v{__version__}[/bold red] | '
                                f'[yellow]{datetime.now()}[/yellow]', highlight=False)
@@ -353,13 +356,13 @@ class TUI:
             self.console.print(Rule(f'[bold green]CurseBreaker[/bold green] [bold red]v{__version__}[/bold red]'))
             self.console.print('')
 
-    def print_log(self):
+    def print_log(self) -> None:
         if self.headless:
             html = self.console.export_html(inline_styles=True, theme=HEADLESS_TERMINAL_THEME)
             with open('CurseBreaker.html', 'a+', encoding='utf-8') as log:
                 log.write(html)
 
-    def print_author_reminder(self):
+    def print_author_reminder(self) -> None:
         if random.randint(1, 10) != 1:
             return
         addon = random.choice(self.core.config['Addons'])
@@ -375,19 +378,22 @@ class TUI:
                                  border_style='yellow'))
         self.console.print('')
 
-    def setup_console(self):
+    def setup_console(self) -> None:
         if self.headless:
             self.console = Console(record=True)
-            if self.os == 'Windows' and (window := windll.kernel32.GetConsoleWindow()):
+            if IS_WINDOWS and (window := windll.kernel32.GetConsoleWindow()):
                 windll.user32.ShowWindow(window, 0)
         elif detect_legacy_windows():
             set_terminal_size(100, 50)
-            windll.kernel32.SetConsoleScreenBufferSize(windll.kernel32.GetStdHandle(-11), wintypes._COORD(100, 200))
+            windll.kernel32.SetConsoleScreenBufferSize(
+                windll.kernel32.GetStdHandle(-11),
+                wintypes._COORD(100, 200)
+            )
             self.console = Console(width=97)
         else:
             self.console = Console()
 
-    def setup_completer(self):
+    def setup_completer(self) -> None:
         if not self.slugs:
             try:
                 self.slugs = json.load(gzip.open(io.BytesIO(
@@ -442,7 +448,7 @@ class TUI:
             'exit': None
         })
 
-    def setup_table(self, sources=False):
+    def setup_table(self, sources: bool = False) -> None:
         self.table = Table(box=box.SQUARE)
         self.table.add_column('Status', header_style='bold white', no_wrap=True, justify='center')
         if sources:
@@ -450,45 +456,48 @@ class TUI:
         self.table.add_column('Name / Author' if self.core.config['ShowAuthors'] else 'Name', header_style='bold white')
         self.table.add_column('Version', header_style='bold white')
 
-    def parse_args(self, args):
-        parsed = []
+    def parse_args(self, args: str) -> list[str]:
+        parsed: list[str] = []
         for addon in sorted(self.core.config['Addons'], key=lambda k: len(k['Name']), reverse=True):
             if addon['Name'] in args or addon['URL'] in args:
                 parsed.append(addon['Name'])
                 args = args.replace(addon['Name'], '', 1)
         return sorted(parsed)
 
-    def parse_link(self, text, link, dev=None, authors=None, uiversion=None):
+    def parse_link(
+        self, text: str, link: str | None, dev: int | None = None,
+        authors: list[str] | None = None, uiversion: str | None = None
+    ) -> Text:
         if dev == 1:
-            dev = ' [bold][B][/bold]'
+            dev_str = ' [bold][B][/bold]'
         elif dev == 2:
-            dev = ' [bold][A][/bold]'
+            dev_str = ' [bold][A][/bold]'
         else:
-            dev = ''
+            dev_str = ''
         if authors and self.core.config['ShowAuthors']:
             authors.sort()
-            authors = f' [bold black]by {", ".join(authors)}[/bold black]'
+            authors_str = f' [bold black]by {", ".join(authors)}[/bold black]'
         else:
-            authors = ''
+            authors_str = ''
         if uiversion and uiversion not in \
                 [v['CurrentVersion'] for _, v in self.core.masterConfig['ClientTypes'].items()]:
             uiversion = ' [bold yellow][!][/bold yellow]'
         else:
             uiversion = ''
         if link:
-            obj = Text.from_markup(f'[link={link}]{text}[/link]{dev}{authors}{uiversion}')
+            obj = Text.from_markup(f'[link={link}]{text}[/link]{dev_str}{authors_str}{uiversion}')
         else:
-            obj = Text.from_markup(f'{text}{dev}{authors}{uiversion}')
+            obj = Text.from_markup(f'{text}{dev_str}{authors_str}{uiversion}')
         obj.no_wrap = True
         return obj
 
-    def parse_custom_addons(self):
-        payload = []
+    def parse_custom_addons(self) -> str:
+        payload: list[str] = []
         for addon in self.core.masterConfig['CustomRepository'].values():
             payload.append(addon['Slug'])
         return ' [bold white]|[/bold white] '.join(payload)
 
-    def c_install(self, args):
+    def c_install(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts a space-separated list of links as an arg'
                                'ument.[bold white]\n\tFlags:[/bold white]\n\t\t[bold white]-i[/bold white] - Disable th'
@@ -535,7 +544,7 @@ class TUI:
         if exceptions:
             self.handle_exception(exceptions, False)
 
-    def c_uninstall(self, args):
+    def c_uninstall(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts a space-separated list of addon names or '
                                'full links as an argument.\n\t[bold white]Flags:[/bold white]\n\t\t[bold white]-k[/bold'
@@ -554,7 +563,7 @@ class TUI:
                 while not progress.finished:
                     for addon in addons:
                         name, version = self.core.del_addon(addon, optkeep)
-                        if name:
+                        if name and version:
                             self.table.add_row('[bold red]Uninstalled[/bold red]', Text(name, no_wrap=True),
                                                Text(version, no_wrap=True))
                         else:
@@ -563,7 +572,10 @@ class TUI:
                         progress.update(task, advance=1, refresh=True)
             self.console.print(self.table)
 
-    def _c_update_process(self, addon, update, force, compact, compacted, provider):  # sourcery skip: low-code-quality
+    def _c_update_process(
+        self, addon: str | dict[str, Any], update: bool, force: bool,
+        compact: bool, compacted: int, provider: bool
+    ) -> int:  # sourcery skip: low-code-quality
         name, authors, versionnew, versionold, uiversion, modified, blocked, source, sourceurl, changelog, dstate \
             = self.core.update_addon(addon if isinstance(addon, str) else addon['URL'], update, force)
 
@@ -577,13 +589,15 @@ class TUI:
 
         additionalstatus = f' [bold red]{source.upper()}[/bold red]' if source == 'Unsupported' and not provider else ''
         if versionold:
-            payload = [self.parse_link(name + mod_indicator, sourceurl, authors=authors),
-                       self.parse_link(versionold, changelog, dstate, uiversion=uiversion)]
+            payload: list[Text | str] = [
+                self.parse_link(name + mod_indicator, sourceurl, authors=authors),
+                self.parse_link(versionold, changelog, dstate, uiversion=uiversion)
+            ]
             if versionold == versionnew:
                 if modified:
                     payload.insert(0, f'[bold red]Modified[/bold red]{additionalstatus}')
                 elif compact and compacted > -1 and source != 'Unsupported':
-                    payload = None
+                    payload = []
                     compacted += 1
                 else:
                     payload.insert(0, f'[green]Up-to-date[/green]{additionalstatus}')
@@ -595,8 +609,11 @@ class TUI:
                 payload = [f'[yellow]{"Updated" if update else "Update available"}[/yellow]{additionalstatus}',
                            payload[0], version]
         else:
-            payload = [f'[bold black]Not installed[/bold black]{additionalstatus}', Text(addon, no_wrap=True),
-                       Text('', no_wrap=True)]
+            payload = [
+                f'[bold black]Not installed[/bold black]{additionalstatus}',
+                Text(addon, no_wrap=True),
+                Text('', no_wrap=True)
+            ]
         if payload:
             if provider:
                 if source == 'Unsupported':
@@ -606,17 +623,24 @@ class TUI:
             self.table.add_row(*payload)
         return compacted
 
-    def c_update(self, args, addline=False, update=True, force=False, reverseprovider=False, reversecompact=False):
+    def c_update(
+        self, args: str | None, addline: bool = False, update: bool = True, force: bool = False,
+        reverseprovider: bool = False, reversecompact: bool = False
+    ) -> None:
         compact = not self.core.config['CompactMode'] if reversecompact else self.core.config['CompactMode']
         provider = not self.core.config['ShowSources'] if reverseprovider else self.core.config['ShowSources']
         self.setup_table(sources=provider)
+        addons: list[dict[str, Any]] = []
+        addons_names: list[str] = []
         if args:
-            addons = self.parse_args(args)
+            addons_names = self.parse_args(args)
+            addons_len = len(addons_names)
             compacted = -1
         else:
             addons = sorted(self.core.config['Addons'], key=lambda k: k['Name'].lower())
+            addons_len = len(addons)
             compacted = 0
-        if len(addons) == 0:
+        if addons_len == 0:
             self.console.print('Apparently there are no addons installed by CurseBreaker (or you provided incorrect add'
                                'on name).\nCommand [green]import[/green] might be used to detect already installed addo'
                                'ns.', highlight=False)
@@ -624,14 +648,14 @@ class TUI:
         exceptions = []
         with Progress('{task.completed:.0f}/{task.total}', '|', BarColumn(bar_width=None), '|',
                       console=None if self.headless else self.console) as progress:
-            task = progress.add_task('', total=len(addons), start=bool(args))
+            task = progress.add_task('', total=addons_len, start=bool(args))
             if not args:
                 with suppress(RuntimeError, httpx.RequestError):
                     self.core.bulk_check(addons)
                 progress.start_task(task)
                 self.core.bulk_check_checksum(addons, progress)
             while not progress.finished:
-                for addon in addons:
+                for addon in addons if not args else addons_names:
                     try:
                         compacted = self._c_update_process(addon, update, force, compact, compacted, provider)
                     except Exception as e:
@@ -651,8 +675,7 @@ class TUI:
         if exceptions:
             self.handle_exception(exceptions, False)
 
-    # noinspection PyTypeChecker
-    def c_force_update(self, args):
+    def c_force_update(self, args: str) -> None:
         if args:
             # Check if any addons have mods
             addons = self.parse_args(args)
@@ -672,10 +695,10 @@ class TUI:
                     mod_data['enabled'] = False
             self.core.save_config()
 
-            self.c_update(False, False, True, True)
+            self.c_update(None, False, True, True)
             self.console.print('\n[yellow]All mods have been disabled. Use toggle_mod to re-enable.[/yellow]')
 
-    def c_status(self, args):
+    def c_status(self, args: str) -> None:
         optsource = False
         optcompact = False
         if args:
@@ -689,7 +712,7 @@ class TUI:
             args = args.strip()
         self.c_update(args, False, False, False, optsource, optcompact)
 
-    def c_orphans(self, _):
+    def c_orphans(self, _: str) -> None:
         orphansd, orphansf = self.core.find_orphans()
         self.console.print('[green]Directories that are not part of any installed addon:[/green]')
         for orphan in sorted(orphansd):
@@ -699,7 +722,7 @@ class TUI:
         for orphan in sorted(orphansf):
             self.console.print(orphan, highlight=False)
 
-    def c_uri_integration(self, _):
+    def c_uri_integration(self, _: str) -> None:
         if self.os == 'Windows':
             self.core.create_reg()
             self.console.print('CurseBreaker.reg file was created. Attempting to import...')
@@ -711,7 +734,7 @@ class TUI:
         else:
             self.console.print('This feature is available only on Windows.')
 
-    def _c_toggle_channel(self, args):
+    def _c_toggle_channel(self, args: str) -> None:
         if args := args[8:]:
             status = self.core.dev_toggle(args)
             if status is None:
@@ -735,7 +758,7 @@ class TUI:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts an addon name (or "global") as an argumen'
                                't.', highlight=False)
 
-    def _c_toggle_pinning(self, args):
+    def _c_toggle_pinning(self, args: str) -> None:
         if args := args[8:]:
             status = self.core.block_toggle(args)
             if status is None:
@@ -747,7 +770,7 @@ class TUI:
         else:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts an addon name as an argument.')
 
-    def _c_toggle_wago(self, args):
+    def _c_toggle_wago(self, args: str) -> None:
         if args := args[5:]:
             if args == self.core.config['WAUsername']:
                 self.console.print(f'Wago version check is now: [green]ENABLED[/green]\nEntries created by [bold white]'
@@ -766,7 +789,7 @@ class TUI:
             self.console.print('Wago version check is now: [red]DISABLED[/red]')
         self.core.save_config()
 
-    def _c_toggle_parse(self, option, inside=None):
+    def _c_toggle_parse(self, option: str, inside: str | None = None) -> bool:
         if inside:
             self.core.config[option][inside] = not self.core.config[option][inside]
             self.core.save_config()
@@ -776,7 +799,7 @@ class TUI:
             self.core.save_config()
             return self.core.config[option]
 
-    def c_toggle(self, args):
+    def c_toggle(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]toggle authors[/green]\n\t\tEnables/disables the displa'
                                'y of addon author names in the table.\n\t[green]toggle autoupdate[/green]\n\t\tEnables/'
@@ -826,12 +849,12 @@ class TUI:
         else:
             self.console.print('Unknown option.')
 
-    def _c_set_parse(self, msg, key, value):
+    def _c_set_parse(self, msg: str, key: str, value: str) -> None:
         self.console.print(msg)
         self.core.config[key] = value.strip()
         self.core.save_config()
 
-    def c_set(self, args):
+    def c_set(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]set wago_addons_api [API key][/green]\n\t\tSets Wago Ad'
                                'dons API key required to use Wago Addons as addon source.\n\t\tIt can be obtained here:'
@@ -881,7 +904,7 @@ class TUI:
         else:
             self.console.print('Unknown option.')
 
-    def _c_wago_update_init(self, flush, verbose):
+    def _c_wago_update_init(self, flush: bool, verbose: bool) -> None:
         accounts = self.core.detect_accounts()
         if self.core.config['WAAccountName'] != '' and self.core.config['WAAccountName'] not in accounts:
             self.core.config['WAAccountName'] = ''
@@ -902,7 +925,7 @@ class TUI:
             self.core.config['WAStash'] = []
             self.core.save_config()
 
-    def _c_wago_update_status(self, addon, status):
+    def _c_wago_update_status(self, addon: str, status: tuple[list[Any], list[Any]]) -> None:
         self.console.print(f'[green]Outdated {addon}:[/green]')
         for aura in status[0]:
             self.console.print(f'[link={aura[1]}]{aura[0]}[/link]', highlight=False)
@@ -910,7 +933,7 @@ class TUI:
         for aura in status[1]:
             self.console.print(f'[link={aura[1]}]{aura[0]}[/link]', highlight=False)
 
-    def c_wago_update(self, _, verbose=True, flush=True):
+    def c_wago_update(self, _: str | None, verbose: bool = True, flush: bool = True) -> None:
         if not os.path.isdir(Path('Interface/AddOns/WeakAuras')) and not os.path.isdir(Path('Interface/AddOns/Plater')):
             if verbose:
                 self.console.print('No compatible addon is installed.')
@@ -948,7 +971,7 @@ class TUI:
                 self.console.print(f'\n[green]The number of outdated Plater profiles/scripts:[/green] '
                                    f'{len(statusplater[0])}', highlight=False)
 
-    def c_search(self, args):
+    def c_search(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts a search query as an argument.')
             return
@@ -960,10 +983,10 @@ class TUI:
             else:
                 self.console.print(f'[link={url}]{url}[/link]', highlight=False)
 
-    def c_backup(self, _):
+    def c_backup(self, _: str) -> None:
         self.core.backup_wtf(None if self.headless else self.console)
 
-    def c_import(self, args):
+    def c_import(self, args: str) -> None:
         names, slugs, installed = self.core.detect_addons()
         if args == 'install' and len(slugs) > 0:
             self.c_install(','.join(slugs))
@@ -978,12 +1001,12 @@ class TUI:
                                ' addons.\nAfter installation run the [bold white]orphans[/bold white] command and [bold'
                                ' white]install[/bold white] missing addons.')
 
-    def c_export(self, _):
+    def c_export(self, _: str) -> None:
         payload = self.core.export_addons()
         pyperclip.copy(payload)
         self.console.print(f'{payload}\n\nThe command above was copied to the clipboard.', highlight=False)
 
-    def c_help(self, _):
+    def c_help(self, _: str) -> None:
         self.console.print('[green]install [URL][/green]\n\tCommand accepts a space-separated list of links.\n\t[bold w'
                            'hite]Flags:[/bold white]\n\t'
                            '\t[bold white]-i[/bold white] - Disable the client version check.\n'
@@ -1042,7 +1065,7 @@ class TUI:
                            'old white]|[/bold white] gh:\\[username]/\\[repository_name]\n\tElvUI [bold white]|[/bold w'
                            'hite] Tukui\n\t' + self.parse_custom_addons(), highlight=False)
 
-    def c_create_mod(self, args):
+    def c_create_mod(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]create_mod [AddonName] [ModName][/green]'
                               '\n\tCreates a mod from current modifications to the addon.'
@@ -1065,7 +1088,7 @@ class TUI:
         except Exception as e:
             self.console.print(f'[red]Error:[/red] {e!s}')
 
-    def c_list_mods(self, args):
+    def c_list_mods(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]list_mods [AddonName][/green]'
                               '\n\tLists all mods for the specified addon.')
@@ -1095,7 +1118,7 @@ class TUI:
 
         self.console.print(table)
 
-    def c_toggle_mod(self, args):
+    def c_toggle_mod(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]toggle_mod [AddonName] [ModName][/green]'
                               '\n\tEnables or disables the specified mod.')
@@ -1133,7 +1156,7 @@ class TUI:
         except Exception as e:
             self.console.print(f'[yellow]Warning:[/yellow] {e!s}')
 
-    def c_delete_mod(self, args):
+    def c_delete_mod(self, args: str) -> None:
         if not args:
             self.console.print('[green]Usage:[/green]\n\t[green]delete_mod [AddonName] [ModName][/green]'
                               '\n\tPermanently deletes the specified mod.')
@@ -1164,7 +1187,7 @@ class TUI:
         self.core.save_config()
         self.console.print(f'[green]✓[/green] Mod [bold white]{mod_name}[/bold white] deleted')
 
-    def c_exit(self, _):
+    def c_exit(self, _: str) -> None:
         self.core.http.close()
         sys.exit(0)
 
