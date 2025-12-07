@@ -21,6 +21,7 @@ from PIL import Image
 from csv import reader
 from shlex import split
 from pathlib import Path
+from textwrap import dedent
 from datetime import datetime
 from contextlib import nullcontext, suppress
 from rich_pixels import Pixels
@@ -1078,63 +1079,125 @@ class TUI:
         self.console.print(f'{payload}\n\nThe command above was copied to the clipboard.', highlight=False)
 
     def c_help(self, _: str) -> None:
-        self.console.print('[green]install [URL][/green]\n\tCommand accepts a space-separated list of links.\n\t[bold w'
-                           'hite]Flags:[/bold white]\n\t'
-                           '\t[bold white]-i[/bold white] - Disable the client version check.\n'
-                           '[green]uninstall [URL/Name][/green]\n\tCommand accepts a space-separated list of addon name'
-                           's or full links.\n\t[bold white]Flags:[/bold white]\n\t\t[bold white]-k[/bold white] - Keep'
-                           ' the addon files after uninstalling.\n'
-                           '[green]update [URL/Name][/green]\n\tCommand accepts a space-separated list of addon names o'
-                           'r full links.\n\tIf no argument is provided all non-modified addons will be updated.\n'
-                           '[green]force_update [URL/Name][/green]\n\tCommand accepts a space-separated list of addon n'
-                           'ames or full links.\n\tSelected addons will be reinstalled or updated regardless of their c'
-                           'urrent state.\n\tIf no argument is provided all addons will be forcefully updated.\n'
-                           '[green]wago_update[/green]\n\tCommand detects all installed WeakAuras and Plater profiles/s'
-                           'cripts.\n\tAnd then generate WeakAuras Companion payload.\n'
-                           '[green]status[/green]\n\tPrints the current state of all installed addons.\n\t[bold yellow]'
-                           '[!][/bold yellow] mark means that the latest release is not updated yet for the current WoW'
-                           ' version.\n\t[bold white]Flags:[/bold white]\n\t\t[bold white]-a[/bold white] - Temporary r'
-                           'everse the table compacting option.\n\t\t[bold white]-s[/bold white] - Temporary reverse th'
-                           'e source display option.\n'
-                           '[green]orphans[/green]\n\tPrints list of orphaned directories and files.\n'
-                           '[green]search [Keyword][/green]\n\tExecutes addon search on Wago Addons.\n'
-                           '[green]backup[/green]\n\tCommand creates a backup of WTF directory.\n'
-                           '[green]import[/green]\n\tCommand attempts to import already installed addons.\n'
-                           '[green]export[/green]\n\tCommand prints list of all installed addons in a form suitable f'
-                           'or sharing.\n'
-                           '[green]toggle authors[/green]\n\tEnables/disables the display of addon author names in the '
-                           'table.\n'
-                           '[green]toggle autoupdate[/green]\n\tEnables/disables the automatic addon update on startup'
-                           '.\n'
-                           '[green]toggle autoupdate_delay[/green]\n\tEnables/disables the timeout before the automatic'
-                           ' addon update.\n'
-                           '[green]toggle backup[/green]\n\tEnables/disables automatic daily backup of WTF directory.\n'
-                           '[green]toggle channel [Name][/green]\n\tCommand accepts an addon name (or "global") as argu'
-                           'ment.\n\tPrioritizes alpha/beta versions for the provided addon.\n'
-                           '[green]toggle compact_mode [/green]\n\tEnables/disables compact table mode that hides entri'
-                           'es of up-to-date addons.\n'
-                           '[green]toggle pinning [Name][/green]\n\tCommand accepts an addon name as argument.\n\tBlock'
-                           's/unblocks updating of the provided addon.\n'
-                           '[green]toggle sources[/green]\n\tEnables/disables the source column in the status table.\n'
-                           '[green]toggle wago [Username][/green]\n\tEnables/disables automatic Wago updates.\n\tIf a u'
-                           'sername is provided check will start to ignore the specified author.\n'
-                           '[green]set wago_addons_api [API key][/green]\n\tSets Wago Addons API key required to use Wa'
-                           'go Addons as addon source.\n\tIt can be obtained here: [link=https://addons.wago.io/patreon'
-                           ']https://addons.wago.io/patreon[/link]\n'
-                           '[green]set wago_api [API key][/green]\n\tSets Wago API key required to access private entri'
-                           'es.\n\tIt can be obtained here: [link=https://wago.io/account]https://wago.io/account[/link'
-                           ']\n'
-                           '[green]set wago_wow_account [Account name][/green]\n\tSets WoW account used by Wago updater'
-                           '.\n\tNeeded only if compatible addons are used on more than one WoW account.\n[green]set gh'
-                           '_api [API key][/green]\n\tSets GitHub API key. Might be needed to get around API rate limit'
-                           's.\n'
-                           '[green]uri_integration[/green]\n\tEnables integration with Wago Addons and Wago page.\n\t"D'
-                           'ownload with Wago App" and "Send to WeakAura Companion App" buttons.\n\n[bold green]Support'
-                           'ed URL:[/bold green]\n\thttps://addons.wago.io/addons/\\[addon_name] [bold white]|[/bold wh'
-                           'ite] wa:\\[addon_name]\n\thttps://www.wowinterface.com/downloads/\\[addon_name] [bold white'
-                           ']|[/bold white] wowi:\\[addon_id]\n\thttps://github.com/\\[username]/\\[repository_name] [b'
-                           'old white]|[/bold white] gh:\\[username]/\\[repository_name]\n\tElvUI [bold white]|[/bold w'
-                           'hite] Tukui\n\t' + self.parse_custom_addons(), highlight=False)
+        help_text = dedent(f"""\
+            [green]install [URL][/green]
+            \tCommand accepts a space-separated list of links.
+            \t[bold white]Flags:[/bold white]
+            \t\t[bold white]-i[/bold white] - Disable the client version check.
+
+            [green]uninstall [URL/Name][/green]
+            \tCommand accepts a space-separated list of addon names or full links.
+            \t[bold white]Flags:[/bold white]
+            \t\t[bold white]-k[/bold white] - Keep the addon files after uninstalling.
+
+            [green]update [URL/Name][/green]
+            \tCommand accepts a space-separated list of addon names or full links.
+            \tIf no argument is provided all non-modified addons will be updated.
+
+            [green]force_update [URL/Name][/green]
+            \tCommand accepts a space-separated list of addon names or full links.
+            \tSelected addons will be reinstalled or updated regardless of their current state.
+            \tIf no argument is provided all addons will be forcefully updated.
+
+            [green]wago_update[/green]
+            \tCommand detects all installed WeakAuras and Plater profiles/scripts.
+            \tAnd then generate WeakAuras Companion payload.
+
+            [green]status[/green]
+            \tPrints the current state of all installed addons.
+            \t[bold yellow][!][/bold yellow] mark means that the latest release is not updated yet for the
+            \tcurrent WoW version.
+            \t[bold white]Flags:[/bold white]
+            \t\t[bold white]-a[/bold white] - Temporary reverse the table compacting option.
+            \t\t[bold white]-s[/bold white] - Temporary reverse the source display option.
+
+            [green]orphans[/green]
+            \tPrints list of orphaned directories and files.
+
+            [green]search [Keyword][/green]
+            \tExecutes addon search on Wago Addons.
+
+            [green]backup[/green]
+            \tCommand creates a backup of WTF directory.
+
+            [green]import[/green]
+            \tCommand attempts to import already installed addons.
+
+            [green]export[/green]
+            \tCommand prints list of all installed addons in a form suitable for sharing.
+
+            [green]toggle authors[/green]
+            \tEnables/disables the display of addon author names in the table.
+
+            [green]toggle autoupdate[/green]
+            \tEnables/disables the automatic addon update on startup.
+
+            [green]toggle autoupdate_delay[/green]
+            \tEnables/disables the timeout before the automatic addon update.
+
+            [green]toggle backup[/green]
+            \tEnables/disables automatic daily backup of WTF directory.
+
+            [green]toggle channel [Name][/green]
+            \tCommand accepts an addon name (or "global") as argument.
+            \tPrioritizes alpha/beta versions for the provided addon.
+
+            [green]toggle compact_mode [/green]
+            \tEnables/disables compact table mode that hides entries of up-to-date addons.
+
+            [green]toggle pinning [Name][/green]
+            \tCommand accepts an addon name as argument.
+            \tBlocks/unblocks updating of the provided addon.
+
+            [green]toggle sources[/green]
+            \tEnables/disables the source column in the status table.
+
+            [green]toggle wago [Username][/green]
+            \tEnables/disables automatic Wago updates.
+            \tIf a username is provided check will start to ignore the specified author.
+
+            [green]set wago_addons_api [API key][/green]
+            \tSets Wago Addons API key required to use Wago Addons as addon source.
+            \tIt can be obtained here: [link=https://addons.wago.io/patreon]https://addons.wago.io/patreon[/link]
+
+            [green]set wago_api [API key][/green]
+            \tSets Wago API key required to access private entries.
+            \tIt can be obtained here: [link=https://wago.io/account]https://wago.io/account[/link]
+
+            [green]set wago_wow_account [Account name][/green]
+            \tSets WoW account used by Wago updater.
+            \tNeeded only if compatible addons are used on more than one WoW account.
+
+            [green]set gh_api [API key][/green]
+            \tSets GitHub API key. Might be needed to get around API rate limits.
+
+            [green]uri_integration[/green]
+            \tEnables integration with Wago Addons and Wago page.
+            \t"Download with Wago App" and "Send to WeakAura Companion App" buttons.
+
+            [green]create_mod [AddonName] [ModName][/green]
+            \tCreates a mod from current modifications to the addon.
+            \tAddon must be installed and modified before creating mod.
+
+            [green]list_mods [[AddonName]][/green]
+            \tLists all mods. If addon name is provided, shows only mods for that addon.
+
+            [green]toggle_mod [AddonName] [ModName][/green]
+            \tEnables or disables the specified mod.
+            \tAddon will be reinstalled from clean backup and mods reapplied.
+
+            [green]delete_mod [AddonName] [ModName][/green]
+            \tPermanently deletes the specified mod.
+
+            [bold green]Supported URL:[/bold green]
+            \thttps://addons.wago.io/addons/\\[addon_name] [bold white]|[/bold white] wa:\\[addon_name]
+            \thttps://www.wowinterface.com/downloads/\\[addon_name] [bold white]|[/bold white] wowi:\\[addon_id]
+            \thttps://github.com/\\[username]/\\[repository_name] [bold white]|[/bold white]
+            \tgh:\\[username]/\\[repository_name]
+            \tElvUI [bold white]|[/bold white] Tukui
+            \t{self.parse_custom_addons()}""")
+
+        self.console.print(help_text, highlight=False)
 
     def c_create_mod(self, args: str) -> None:
         if not args:
