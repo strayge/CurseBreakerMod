@@ -10,7 +10,7 @@ class CustomRepositoryProvider(BaseAddonProvider):
     def __init__(self, http: httpx.Client, config: dict[str, Any], master_config: dict[str, Any]):
         super().__init__(http, config, master_config)
         self.name: str = "GitHub"  # Uses GitHub for source display
-        self.prefix: str = ""  # No prefix - uses keywords directly
+        self.prefix: str = ""
 
     def is_addon_url(self, url: str) -> bool:
         """Check if URL is a custom repository keyword."""

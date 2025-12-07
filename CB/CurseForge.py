@@ -57,7 +57,7 @@ class CurseForgeAddon(BaseAddon):
             raise RuntimeError(f'{self.name}.\nUnsupported client type: {self.clientType}')
 
         # Filter files by game version type and release type
-        compatible_files = []
+        compatible_files: list[dict[str, Any]] = []
         max_release_type = self.allowDev + 1  # 0->1 (stable), 1->2 (stable+beta), 2->3 (all)
 
         for file_index in self.payload['latestFilesIndexes']:

@@ -394,7 +394,7 @@ class TUI:
             set_terminal_size(100, 50)
             windll.kernel32.SetConsoleScreenBufferSize(
                 windll.kernel32.GetStdHandle(-11),
-                wintypes._COORD(100, 200)
+                wintypes._COORD(100, 200)  # pyright: ignore[reportPrivateUsage]
             )
             self.console = Console(width=97)
         else:
@@ -409,7 +409,7 @@ class TUI:
                         self.core.http.get('https://cursebreaker.acidweb.dev/slugs-v2.json.gz').content)))
                 except (StopIteration, UnicodeDecodeError, json.JSONDecodeError, httpx.RequestError):
                     pass
-        addons = []
+        addons: list[str] = []
         for addon in sorted(self.core.config['Addons'], key=lambda k: k['Name'].lower()):
             addons.append(addon['Name'])
         slugs = ['ElvUI', 'Tukui']
@@ -524,7 +524,7 @@ class TUI:
             args = args.replace('-i', '', 1)
         args = re.sub(r'([a-zA-Z0-9_:])( +)([a-zA-Z0-9_:])', r'\1,\3', args)
         addons = [re.sub(r'[\[\]]', '', addon).strip() for addon in next(iter(reader([args], skipinitialspace=True)))]
-        exceptions = []
+        exceptions: list[Exception] = []
         if addons:
             if self.core.clientType != 'retail':
                 for addon in addons:
@@ -654,7 +654,7 @@ class TUI:
                                'on name).\nCommand [green]import[/green] might be used to detect already installed addo'
                                'ns.', highlight=False)
             return
-        exceptions = []
+        exceptions: list[Exception] = []
         with Progress('{task.completed:.0f}/{task.total}', '|', BarColumn(bar_width=None), '|',
                       console=None if self.headless else self.console) as progress:
             task = progress.add_task('', total=addons_len, start=bool(args))

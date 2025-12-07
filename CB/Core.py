@@ -197,7 +197,7 @@ class Core:
         for addon in self.config['Addons']:
             directories = directories + addon['Directories']
         if dupes := [x for x in directories if x in found or found.add(x)]:
-            addons = []
+            addons: list[str] = []
             for addon in self.config['Addons']:
                 if set(addon['Directories']).intersection(dupes):
                     addons.append(addon['Name'])
@@ -254,7 +254,7 @@ class Core:
             return
 
         # Get versions referenced by mods
-        referenced_versions = set()
+        referenced_versions: set[str] = set()
         if addon_name in self.config.get('Mods', {}):
             for mod_data in self.config['Mods'][addon_name].values():
                 if 'baseVersion' in mod_data:
@@ -436,7 +436,7 @@ class Core:
     def bulk_check_checksum(self, addons: list[dict[str, Any]], pbar: Any) -> None:
         self.checksumCache = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            workers = []
+            workers: list[concurrent.futures.Future[tuple[str, bool]]] = []
             for addon in addons:
                 workers.append(executor.submit(self.check_checksum, addon, pbar))
             for future in concurrent.futures.as_completed(workers):
@@ -594,7 +594,7 @@ class Core:
         if not os.path.isdir(Path('WTF/Account')):
             return []
         accounts = os.listdir(Path('WTF/Account'))
-        accounts_processed = []
+        accounts_processed: list[str] = []
         for account in accounts:
             if os.path.isfile(Path(f'WTF/Account/{account}/SavedVariables/WeakAuras.lua')) or \
                         os.path.isfile(Path(f'WTF/Account/{account}/SavedVariables/Plater.lua')):
@@ -654,7 +654,7 @@ class Core:
 
     def export_addons(self) -> str:
         """Export installed addons to shorthand format."""
-        addons = []
+        addons: list[str] = []
         for addon in self.config['Addons']:
             url = addon['URL']
 

@@ -51,8 +51,8 @@ class TukuiProvider(BaseAddonProvider):
     def __init__(self, http: httpx.Client, config: dict[str, Any], master_config: dict[str, Any]):
         super().__init__(http, config, master_config)
         self.name: str = "Tukui"
-        self.prefix: str = ""  # No prefix - uses keywords directly
-        self.tukuiCache: list[dict[str, Any]] | None = None
+        self.prefix: str = ""
+        self.tukuiCache: list[dict[str, Any]] = []
 
     def is_addon_url(self, url: str) -> bool:
         return url.lower() in ['elvui', 'tukui']

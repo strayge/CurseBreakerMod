@@ -41,6 +41,7 @@ class BaseParser:
         self.list: dict[str, int] = {}
         self.ignored: dict[str, int] = {}
         self.data: dict[str, list[str]] = {'slugs': [], 'stash': []}
+        self.api: str = ''
 
 
 class WeakAuraParser(BaseParser):
@@ -168,7 +169,7 @@ class WagoUpdater:
             return ''
         if entry['changelog']['format'] == 'bbcode':
             return self.bbParser.strip(entry['changelog']['text'])
-        elif entry['changelog']['format'] == 'markdown':
+        if entry['changelog']['format'] == 'markdown':
             return self.mdParser.convert(entry['changelog']['text'])
         return ''
 

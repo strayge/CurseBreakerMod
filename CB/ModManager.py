@@ -68,7 +68,7 @@ class ModManager:
                     expected_file = expected_path / rel_path
 
                     if expected_file.exists():
-                        diff = self._generate_diff(expected_file, file_path, addon_name, addon['Version'])
+                        diff = self._generate_diff(expected_file, file_path, addon['Version'])
                         if diff:
                             patches[str(rel_path)] = diff
 
@@ -109,7 +109,7 @@ class ModManager:
         enabled_mods.sort(key=lambda x: x[1].get('priority', 999))
         return enabled_mods
 
-    def _generate_diff(self, expected_file: Path, current_file: Path, addon_name: str, version: str) -> str | None:
+    def _generate_diff(self, expected_file: Path, current_file: Path, version: str) -> str | None:
         """Generate unified diff between two files"""
         try:
             with open(expected_file, encoding='utf-8', errors='ignore') as f:
@@ -137,7 +137,7 @@ class ModManager:
 
         # Parse patch
         patch_lines = patch_content.split('\n')
-        hunks = []
+        hunks: list[dict[str, Any]] = []
         current_hunk: dict[str, Any] | None = None
 
         for line in patch_lines:
@@ -164,7 +164,7 @@ class ModManager:
 
         for hunk in reversed(hunks):
             old_line_idx = hunk['old_start'] - 1
-            new_lines = []
+            new_lines: list[str] = []
             lines_to_delete = 0
 
             for line in hunk['lines']:
@@ -207,7 +207,7 @@ class ModManager:
         if not enabled_mods:
             return []
 
-        failed_mods = []
+        failed_mods: list[tuple[str, str]] = []
         current_path = Path('Interface/AddOns')
 
         for mod_name, mod_data in enabled_mods:

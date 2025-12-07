@@ -36,3 +36,4 @@ reportUnusedCallResult = false
 reportUnknownArgumentType = false
 reportImplicitOverride = false
 reportPossiblyUnboundVariable = false
+reportMissingTypeStubs = false
