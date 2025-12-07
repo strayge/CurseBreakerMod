@@ -164,21 +164,22 @@ class ModManager:
 
         for hunk in reversed(hunks):
             old_line_idx = hunk['old_start'] - 1
-            new_lines: list[str] = []
-            lines_to_delete = 0
+            current_idx = old_line_idx
 
             for line in hunk['lines']:
-                if line.startswith('+'):
-                    new_lines.append(line[1:] + '\n' if not line[1:].endswith('\n') else line[1:])
-                elif line.startswith('-'):
-                    lines_to_delete += 1
+                if line.startswith('-'):
+                    # Remove line from result
+                    del result_lines[current_idx]
+                elif line.startswith('+'):
+                    # Insert new line
+                    new_content = line[1:]
+                    if not new_content.endswith('\n'):
+                        new_content += '\n'
+                    result_lines.insert(current_idx, new_content)
+                    current_idx += 1
                 elif line.startswith(' '):
-                    new_lines.append(line[1:] + '\n' if not line[1:].endswith('\n') else line[1:])
-
-            # Remove old lines and insert new lines
-            del result_lines[old_line_idx:old_line_idx + lines_to_delete]
-            for i, new_line in enumerate(new_lines):
-                result_lines.insert(old_line_idx + i, new_line)
+                    # Context line - just advance index
+                    current_idx += 1
 
         # Write patched content
         with open(target_file, 'w', encoding='utf-8', errors='ignore') as f:
