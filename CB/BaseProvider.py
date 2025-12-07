@@ -71,10 +71,6 @@ class BaseAddonProvider(ABC):
         """Build full URL from identifier."""
         ...
 
-    def normalize_url(self, url: str) -> str:
-        """Normalize URL (remove trailing slashes, etc.)."""
-        return url.rstrip('/')
-
     def get_website_url(self, url: str) -> str | None:
         """Get the human-readable website URL (for display). Default: return url."""
         return url

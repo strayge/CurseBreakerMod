@@ -142,11 +142,6 @@ class CurseForgeFingerprintScanner:
                             newfilestoparse = [Path(f.parent, element) for element in newfilestoparse]
                             self.parse_file(newfilestoparse)
 
-    def normalize_content(self, content: bytes) -> bytes:
-        """Normalize content by removing whitespace characters for fingerprinting."""
-        # Whitespace characters to skip: tab (9), newline (10), carriage return (13), space (32)
-        return bytes(b for b in content if b not in [9, 10, 13, 32])
-
     def compute_hash(self, data: bytes) -> int:
         """
         Compute MurmurHash2 exactly as CurseForge does.
@@ -219,10 +214,6 @@ class CurseForgeFingerprintScanner:
             # Use custom hash implementation for folder fingerprint too
             self.folderFingerprint = self.compute_hash(fingerprints_string.encode('ascii'))
 
-    def get_individual_fingerprints(self) -> list[int]:
-        """Return list of individual file fingerprints (sorted)"""
-        return self.individualFingerprints
-
     def get_folder_fingerprint(self) -> int | None:
         """Return computed folder fingerprint (for caching/comparison)"""
         return self.folderFingerprint
@@ -242,140 +233,6 @@ def scan_directory_fingerprints(path: Path, directory: str) -> tuple[str, int | 
     scanner = CurseForgeFingerprintScanner(path / directory)
     folder_fingerprint = scanner.get_folder_fingerprint()
     return directory, folder_fingerprint
-
-
-def detect_curseforge_addons(
-    http: httpx.Client, folder_fingerprints: dict[str, int | None], check_if_installed_dirs: Any
-) -> tuple[list[str], list[str], list[str], set[str]]:
-    """
-    Detect CurseForge addons using fingerprint matching.
-    DEPRECATED: Use CurseForgeProvider.scan() instead.
-
-    Args:
-        http: HTTP client instance
-        folder_fingerprints: Dict of {directory: fingerprint}
-        check_if_installed_dirs: Function to check if directories are already installed
-
-    Returns:
-        Tuple of (names, slugs, namesinstalled, matched_dirs)
-    """
-    names: list[str] = []
-    namesinstalled: list[str] = []
-    slugs: list[str] = []
-    cf_matched_dirs: set[str] = set()
-
-    # Flatten fingerprints for API call
-    all_fingerprints = list(folder_fingerprints.values())
-
-    if not all_fingerprints:
-        return names, slugs, namesinstalled, cf_matched_dirs
-
-    try:
-        cf_payload = http.post('https://api.curseforge.com/v1/fingerprints/1',
-                              json={'fingerprints': all_fingerprints},
-                              headers={'x-api-key': CF_API_KEY},
-                              timeout=30)
-        if cf_payload.status_code != 200:
-            return names, slugs, namesinstalled, cf_matched_dirs
-
-        cf_data = cf_payload.json()['data']
-
-        # Process exact matches
-        mod_to_dirs_exact: dict[int, set[str]] = {}  # {modId: {dir1, dir2, ...}}
-        exact_mod_ids: set[int] = set()
-
-        if 'exactMatches' in cf_data:
-            for match in cf_data['exactMatches']:
-                # Filter for WoW addons only (gameId=1)
-                if 'file' not in match or match['file'].get('gameId') != 1:
-                    continue
-                mod_id = match['id']
-                exact_mod_ids.add(mod_id)
-                # Check modules in the matched file to find which directory matched
-                if 'modules' in match['file']:
-                    for module in match['file']['modules']:
-                        module_name = module['name']
-                        # Find directory with matching name (case-insensitive)
-                        for directory in folder_fingerprints.keys():
-                            if directory.lower() == module_name.lower():
-                                if mod_id not in mod_to_dirs_exact:
-                                    mod_to_dirs_exact[mod_id] = set()
-                                mod_to_dirs_exact[mod_id].add(directory)
-                                cf_matched_dirs.add(directory)
-                                break
-
-        # Process partial matches (deduplicate against exact matches)
-        mod_to_dirs_partial: dict[int, set[str]] = {}  # {modId: {dir1, dir2, ...}}
-
-        if 'partialMatches' in cf_data:
-            for match in cf_data['partialMatches']:
-                # Filter for WoW addons only (gameId=1)
-                if 'file' not in match or match['file'].get('gameId') != 1:
-                    continue
-                mod_id = match['id']
-                # Skip if already in exact matches
-                if mod_id in exact_mod_ids:
-                    continue
-                # Check modules in the matched file
-                if 'modules' in match['file']:
-                    for module in match['file']['modules']:
-                        module_name = module['name']
-                        # Find directory with matching name (case-insensitive)
-                        for directory in folder_fingerprints.keys():
-                            if directory.lower() == module_name.lower():
-                                if mod_id not in mod_to_dirs_partial:
-                                    mod_to_dirs_partial[mod_id] = set()
-                                mod_to_dirs_partial[mod_id].add(directory)
-                                cf_matched_dirs.add(directory)
-                                break
-
-        # Fetch mod details for all matched mod IDs
-        all_mod_ids = list(set(mod_to_dirs_exact.keys()) | set(mod_to_dirs_partial.keys()))
-
-        if all_mod_ids:
-            try:
-                mods_payload = http.post('https://api.curseforge.com/v1/mods',
-                                        json={'modIds': all_mod_ids},
-                                        headers={'x-api-key': CF_API_KEY},
-                                        timeout=30)
-                if mods_payload.status_code == 200:
-                    mods_data = mods_payload.json()['data']
-                    mod_details = {mod['id']: mod for mod in mods_data}
-
-                    # Process exact matches first
-                    for mod_id, directories in mod_to_dirs_exact.items():
-                        if mod_id in mod_details:
-                            mod = mod_details[mod_id]
-                            addon_name = mod['name']
-                            addon_slug = mod['slug']
-                            sorted_dirs = sorted(directories)
-
-                            # Check if already installed
-                            if check_if_installed_dirs(sorted_dirs):
-                                namesinstalled.append(addon_name)
-                            else:
-                                names.append(addon_name)
-                                slugs.append(f'cf:{addon_slug}')
-
-                    # Process partial matches after exact matches
-                    for mod_id, directories in mod_to_dirs_partial.items():
-                        if mod_id in mod_details:
-                            mod = mod_details[mod_id]
-                            addon_name = mod['name']
-                            addon_slug = mod['slug']
-                            sorted_dirs = sorted(directories)
-
-                            if check_if_installed_dirs(sorted_dirs):
-                                namesinstalled.append(addon_name)
-                            else:
-                                names.append(addon_name)
-                                slugs.append(f'cf:{addon_slug}')
-            except Exception:
-                pass  # Continue with partial results if mod details fetch fails
-    except Exception:
-        pass  # Continue with partial results if CurseForge API fails
-
-    return names, slugs, namesinstalled, cf_matched_dirs
 
 
 @final

@@ -115,9 +115,6 @@ class WagoUpdater:
         if self.username == 'DISABLED':
             self.username = ''
 
-    def clean_string(self, s: str) -> str:
-        return s.replace('"', '\\"')
-
     @retry('Failed to parse Wago data. Wago might be down or provided API key is incorrect.')
     def check_updates(self, addon: BaseParser) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         expired_entries: list[tuple[str, str]] = []
