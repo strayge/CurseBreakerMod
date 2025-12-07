@@ -550,16 +550,16 @@ class Core:
 
     def update_addon(
         self, url: str, update: bool, force: bool
-    ) -> tuple[str, list[str], str | None, str | None, str | None, bool, bool, str, str | None, str | None, int | None]:
+    ) -> tuple[str, list[str], str | None, str | None, list[str], bool, bool, str, str | None, str | None, int | None]:
         if not (old := self.check_if_installed(url)):
-            return url, [], None, None, None, False, False, '?', None, None, None
+            return url, [], None, None, [], False, False, '?', None, None, None
         dev = self.check_if_dev(old['URL'])
         blocked = self.check_if_blocked(old)
         oldversion = old['Version']
         modified = self.checksumCache[old['URL']] if old['URL'] in self.checksumCache else self.check_checksum(old)[1]
         if old['URL'].startswith(('https://www.townlong-yak.com/addons/',
                                   'https://www.tukui.org/')):
-            return old['Name'], [], oldversion, oldversion, None, modified, blocked, 'Unsupported', old['URL'], \
+            return old['Name'], [], oldversion, oldversion, [], modified, blocked, 'Unsupported', old['URL'], \
                        None, dev
         source, sourceurl = self.parse_url_source(old['URL'])
         new = self.parse_url(old['URL'])

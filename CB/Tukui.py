@@ -22,7 +22,7 @@ class TukuiAddon(BaseAddon):
         self.name = self.payload['name'].strip().strip('\u200b')
         self.downloadUrl = self.payload['url']
         self.currentVersion = self.payload['version']
-        self.uiVersion = clientversion if clientversion in self.payload['patch'] else self.payload['patch'][0]
+        self.uiVersion = self.payload['patch']
         self.directories = self.payload['directories']
         self.author = [self.payload['author']]
         self.changelogUrl = self.payload['changelog_url']

@@ -32,7 +32,7 @@ class CurseForgeAddon(BaseAddon):
         self.name: str = self.payload['name'].strip().strip('\u200b')
         self.changelogUrl: str = self.payload['links']['websiteUrl']
         self.author: list[str] = [author['name'] for author in self.payload['authors']]
-        self.providerId = self.payload['id']  # Assign without annotation to avoid override type mismatch
+        self.providerId = self.payload['id']
         self.requiredDepIds: list[int] = []  # Will be populated in get_current_version()
         self.get_current_version()
 
@@ -86,7 +86,9 @@ class CurseForgeAddon(BaseAddon):
 
         self.downloadUrl = selected_file['downloadUrl']
         self.currentVersion = selected_file['displayName']
-        self.uiVersion = selected_file_index['gameVersion']
+
+        game_versions = selected_file.get('gameVersions', [])
+        self.uiVersion = game_versions
 
         # Extract required dependencies immediately
         self.requiredDepIds = []

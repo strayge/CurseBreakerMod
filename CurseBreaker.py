@@ -477,7 +477,7 @@ class TUI:
 
     def parse_link(
         self, text: str, link: str | None, dev: int | None = None,
-        authors: list[str] | None = None, uiversion: str | None = None
+        authors: list[str] | None = None, uiversion: list[str] | None = None
     ) -> Text:
         if dev == 1:
             dev_str = ' [bold][B][/bold]'
@@ -490,15 +490,16 @@ class TUI:
             authors_str = f' [bold black]by {", ".join(authors)}[/bold black]'
         else:
             authors_str = ''
-        if uiversion and uiversion not in \
-                [v['CurrentVersion'] for _, v in self.core.masterConfig['ClientTypes'].items()]:
-            uiversion = ' [bold yellow][!][/bold yellow]'
-        else:
-            uiversion = ''
+        # Check if ANY of the addon's supported versions match current WoW versions
+        uiversion_indicator = ''
+        if uiversion:
+            current_versions = [v['CurrentVersion'] for _, v in self.core.masterConfig['ClientTypes'].items()]
+            if not any(v in current_versions for v in uiversion):
+                uiversion_indicator = ' [bold yellow][!][/bold yellow]'
         if link:
-            obj = Text.from_markup(f'[link={link}]{text}[/link]{dev_str}{authors_str}{uiversion}')
+            obj = Text.from_markup(f'[link={link}]{text}[/link]{dev_str}{authors_str}{uiversion_indicator}')
         else:
-            obj = Text.from_markup(f'{text}{dev_str}{authors_str}{uiversion}')
+            obj = Text.from_markup(f'{text}{dev_str}{authors_str}{uiversion_indicator}')
         obj.no_wrap = True
         return obj
 

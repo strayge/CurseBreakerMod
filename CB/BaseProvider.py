@@ -24,7 +24,7 @@ class BaseAddon(ABC):
         self.currentVersion: str = ""
         self.downloadUrl: str  = ""
         self.changelogUrl: str = ""
-        self.uiVersion: str = ""
+        self.uiVersion: list[str] = []
         self.directories: list[str] = []
         self.author: list[str] = []
         self.zipContent: bytes | None = None

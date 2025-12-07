@@ -123,7 +123,7 @@ class WagoAddonsAddon(BaseAddon):
         self.downloadUrl = release['download_link'] if 'download_link' in release else release['link']
         patches = release['supported_patches'] if 'supported_patches' in release \
             else release[f'supported_{self.clientType}_patches']
-        self.uiVersion = self.clientVersion if self.clientVersion in patches else patches[0]
+        self.uiVersion = patches
         self.changelogUrl = f'{self.payload["website_url"]}/versions'
         self.currentVersion = release['label']
 
