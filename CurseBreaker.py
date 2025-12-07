@@ -216,6 +216,8 @@ class TUI:
                 self.core.http.close()
                 break
             else:
+                if not command_str:
+                    continue
                 command = command_str.split(' ', 1)
                 if getattr(self, f'c_{command[0].lower()}', False):
                     try:
