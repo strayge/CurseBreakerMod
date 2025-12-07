@@ -389,10 +389,10 @@ class CurseForgeProvider(BaseAddonProvider):
         return url.startswith('https://www.curseforge.com/wow/addons/')
 
     def convert_url_to_id(self, url: str) -> str:
-        return url.split('/')[-1]
+        return url.split('/')[-1].lower()
 
     def convert_id_to_url(self, identifier: str) -> str:
-        return f'https://www.curseforge.com/wow/addons/{identifier}'
+        return f'https://www.curseforge.com/wow/addons/{identifier.lower()}'
 
     def create_addon(self, url: str, client_type: str, **kwargs: Any) -> BaseAddon:
         return CurseForgeAddon(
