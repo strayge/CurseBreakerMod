@@ -539,13 +539,51 @@ class TUI:
                 while not progress.finished:
                     for addon in addons:
                         try:
-                            installed, name, version = self.core.add_addon(addon, optignore)
+                            # Confirmation callback for dependencies
+                            def confirm_deps(deps_list: list[tuple[str, str, Any]]) -> bool:
+                                if not deps_list:
+                                    return True
+
+                                # Display dependency tree
+                                tree_lines = [
+                                    '\n[bold yellow]This addon requires the following dependencies:[/bold yellow]'
+                                ]
+                                for _dep_url, dep_name, dep_provider_id in deps_list:
+                                    if self.core.check_if_installed_by_provider_id(dep_provider_id):
+                                        tree_lines.append(
+                                            f'  - {dep_name} [bold green](already installed)[/bold green]'
+                                        )
+                                    else:
+                                        tree_lines.append(
+                                            f'  - {dep_name} [bold cyan](will be installed)[/bold cyan]'
+                                        )
+
+                                for line in tree_lines:
+                                    self.console.print(line)
+
+                                return Confirm.ask('\n[bold white]Install addon with dependencies?[/bold white]',
+                                                 console=self.console, default=True)
+
+                            # Install with dependencies
+                            installed, name, version, dep_names = self.core.add_addon_with_dependencies(
+                                addon, optignore, confirm_callback=confirm_deps
+                            )
+
                             if installed:
-                                self.table.add_row('[green]Installed[/green]', Text(name, no_wrap=True),
-                                                   Text(version, no_wrap=True))
+                                dep_str = f' [dim](+{len(dep_names)} dependencies)[/dim]' if dep_names else ''
+                                self.table.add_row('[green]Installed[/green]', name + dep_str,
+                                                 Text(version, no_wrap=True))
                             else:
                                 self.table.add_row('[bold black]Already installed[/bold black]',
-                                                   Text(name, no_wrap=True), Text(version, no_wrap=True))
+                                                 Text(name, no_wrap=True), Text(version, no_wrap=True))
+                        except RuntimeError as e:
+                            # User-facing errors (like cancellation or dependency issues) shown in table
+                            if 'cancelled by user' in str(e).lower():
+                                self.table.add_row('[yellow]Cancelled[/yellow]', Text(addon, no_wrap=True),
+                                                 Text('', no_wrap=True))
+                            else:
+                                self.table.add_row('[bold red]Error[/bold red]', Text(addon, no_wrap=True),
+                                                 Text(str(e), no_wrap=True))
                         except Exception as e:
                             exceptions.append(e)
                         progress.update(task, advance=1, refresh=True)
@@ -557,29 +595,49 @@ class TUI:
         if not args:
             self.console.print('[green]Usage:[/green]\n\tThis command accepts a space-separated list of addon names or '
                                'full links as an argument.\n\t[bold white]Flags:[/bold white]\n\t\t[bold white]-k[/bold'
-                               ' white] - Keep the addon files after uninstalling.', highlight=False)
+                               ' white] - Keep the addon files after uninstalling.\n\t\t[bold white]-f[/bold white] - '
+                               'Force delete even if required by other addons.', highlight=False)
             return
         optkeep = False
+        optforce = False
         pargs = split(args.replace("'", "\\'"))
         if '-k' in pargs:
             optkeep = True
             args = args.replace('-k', '', 1)
+        if '-f' in pargs:
+            optforce = True
+            args = args.replace('-f', '', 1)
         addons = self.parse_args(args)
+        exceptions: list[Exception] = []
         if len(addons) > 0:
             with Progress('{task.completed}/{task.total}', '|', BarColumn(bar_width=None), '|', auto_refresh=False,
                           console=self.console) as progress:
                 task = progress.add_task('', total=len(addons))
                 while not progress.finished:
                     for addon in addons:
-                        name, version = self.core.del_addon(addon, optkeep)
-                        if name and version:
-                            self.table.add_row('[bold red]Uninstalled[/bold red]', Text(name, no_wrap=True),
-                                               Text(version, no_wrap=True))
-                        else:
-                            self.table.add_row('[bold black]Not installed[/bold black]', Text(addon, no_wrap=True),
-                                               Text('', no_wrap=True))
+                        try:
+                            name, version, removed_deps = self.core.del_addon(addon, optkeep, optforce)
+                            if name and version:
+                                self.table.add_row('[bold red]Uninstalled[/bold red]', Text(name, no_wrap=True),
+                                                   Text(version, no_wrap=True))
+                                # Show auto-removed dependencies
+                                for dep_name in removed_deps:
+                                    self.table.add_row('[dim red]↳ Dependency removed[/dim red]',
+                                                       Text(dep_name, no_wrap=True),
+                                                       Text('', no_wrap=True))
+                            else:
+                                self.table.add_row('[bold black]Not installed[/bold black]', Text(addon, no_wrap=True),
+                                                   Text('', no_wrap=True))
+                        except RuntimeError as e:
+                            # User-facing errors (like dependency conflicts) shown in table
+                            self.table.add_row('[bold red]Error[/bold red]', Text(addon, no_wrap=True),
+                                             Text(str(e), no_wrap=True))
+                        except Exception as e:
+                            exceptions.append(e)
                         progress.update(task, advance=1, refresh=True)
             self.console.print(self.table)
+        if exceptions:
+            self.handle_exception(exceptions, False)
 
     def _c_update_process(
         self, addon: str | dict[str, Any], update: bool, force: bool,

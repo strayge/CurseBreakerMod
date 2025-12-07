@@ -32,6 +32,8 @@ class CurseForgeAddon(BaseAddon):
         self.name: str = self.payload['name'].strip().strip('\u200b')
         self.changelogUrl: str = self.payload['links']['websiteUrl']
         self.author: list[str] = [author['name'] for author in self.payload['authors']]
+        self.providerId = self.payload['id']  # Assign without annotation to avoid override type mismatch
+        self.requiredDepIds: list[int] = []  # Will be populated in get_current_version()
         self.get_current_version()
 
     @retry()
@@ -85,6 +87,13 @@ class CurseForgeAddon(BaseAddon):
         self.downloadUrl = selected_file['downloadUrl']
         self.currentVersion = selected_file['displayName']
         self.uiVersion = selected_file_index['gameVersion']
+
+        # Extract required dependencies immediately
+        self.requiredDepIds = []
+        if 'dependencies' in selected_file:
+            for dep in selected_file['dependencies']:
+                if dep.get('relationType') == 3:  # RequiredDependency only
+                    self.requiredDepIds.append(dep['modId'])
 
     @retry()
     def get_addon(self) -> None:
@@ -505,3 +514,57 @@ class CurseForgeProvider(BaseAddonProvider):
             pass
 
         return detected
+
+    def get_dependencies(self, addon_url: str) -> list[tuple[str, str, Any]]:
+        """
+        Get required dependencies for a CurseForge addon.
+        Returns list of (url, name, provider_id) for dependencies that need to be installed.
+        """
+        # Create addon instance to get metadata and extract dependencies
+        addon = self.create_addon(addon_url, self.masterConfig.get('CurrentClientType', 'retail'))
+
+        # Type check: ensure we have a CurseForgeAddon instance
+        if not isinstance(addon, CurseForgeAddon):
+            return []
+
+        if not addon.requiredDepIds:
+            return []
+
+        # Batch fetch metadata for all dependencies
+        return self.get_addon_by_provider_id(addon.requiredDepIds)
+
+    def get_addon_by_provider_id(self, provider_ids: list[int]) -> list[tuple[str, str, int]]:
+        """
+        Batch fetch addon metadata by modIds using CF API.
+        Makes a single API call to get all addon details.
+        Returns list of (url, name, mod_id) tuples.
+        """
+        if not provider_ids:
+            return []
+
+        try:
+            # Single API call to get all addons
+            response = self.http.post(
+                'https://api.curseforge.com/v1/mods',
+                json={'modIds': provider_ids},
+                headers={'x-api-key': CF_API_KEY},
+                timeout=15
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f'Failed to fetch dependencies: API returned {response.status_code}')
+
+        except httpx.RequestError as e:
+            raise RuntimeError(f'Failed to fetch dependencies: {e!s}') from e
+        else:
+            # Build result list from API response (no additional calls needed)
+            data = response.json()['data']
+            results: list[tuple[str, str, int]] = []
+            for addon_data in data:
+                # Construct URL from slug (same pattern as regular CF URLs)
+                url = f"https://www.curseforge.com/wow/addons/{addon_data['slug']}"
+                name = addon_data['name']
+                mod_id = addon_data['id']
+                results.append((url, name, mod_id))
+
+            return results

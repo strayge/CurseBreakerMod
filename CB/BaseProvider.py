@@ -1,3 +1,4 @@
+# pyright: reportUnusedParameter=false
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ class BaseAddon(ABC):
         self.author: list[str] = []
         self.zipContent: bytes | None = None
         self.archive: zipfile.ZipFile | None = None
+        self.providerId: int | str | None = None
 
     @abstractmethod
     def get_addon(self) -> None:
@@ -105,9 +107,7 @@ class BaseAddonProvider(ABC):
             addon_urls: List of addon URLs from this provider
             client_type: Current client type
         """
-        # Default: do nothing (providers can override if they support bulk checking)
-        _ = addon_urls, client_type
-        return
+        return None
 
     def scan(self, addon_dirs: list[str], path: Path, client_type: str) -> list[DetectedAddon]:
         """
@@ -121,8 +121,34 @@ class BaseAddonProvider(ABC):
         Returns:
             List of DetectedAddon instances
         """
-        # Default: return empty list (providers can override if they support scanning)
-        _ = addon_dirs, path, client_type
+        return []
+
+    # ===== Dependency Resolution =====
+
+    def get_dependencies(self, addon_url: str) -> list[tuple[str, str, Any]]:
+        """
+        Get required dependencies for an addon.
+
+        Args:
+            addon_url: The addon URL to check for dependencies
+
+        Returns:
+            List of (url, name, provider_id) tuples for required dependencies.
+            Default implementation returns empty list (no dependencies).
+        """
+        return []
+
+    def get_addon_by_provider_id(self, provider_ids: list[Any]) -> list[tuple[str, str, Any]]:
+        """
+        Fetch addon metadata by provider-specific IDs.
+
+        Args:
+            provider_ids: List of provider-specific IDs to fetch
+
+        Returns:
+            List of (url, name, provider_id) tuples.
+            Default implementation returns empty list (unsupported).
+        """
         return []
 
     # ===== Export =====

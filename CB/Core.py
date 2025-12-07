@@ -131,6 +131,13 @@ class Core:
             if addon['URL'].startswith('https://www.tukui.org/classic-tbc-addons.php?id='):
                 addon['URL'] = addon['URL'].replace('https://www.tukui.org/classic-tbc-addons.php?id=',
                                                     'https://www.tukui.org/classic-wotlk-addons.php?id=')
+            # Dependency tracking
+            if 'ProviderId' not in addon:
+                addon['ProviderId'] = None
+            if 'RequiredBy' not in addon:
+                addon['RequiredBy'] = []
+            if 'InstalledAsDependency' not in addon:
+                addon['InstalledAsDependency'] = False
         for add in [['2.1.0', 'WAUsername', ''],
                     ['2.2.0', 'WAAccountName', ''],
                     ['2.2.0', 'WAAPIKey', ''],
@@ -182,6 +189,13 @@ class Core:
     def check_if_installed_dirs(self, directories: list[str]) -> dict[str, Any] | None:
         for addon in self.config['Addons']:
             if Counter(directories) == Counter(addon['Directories']):
+                return addon
+        return None
+
+    def check_if_installed_by_provider_id(self, provider_id: int | str) -> dict[str, Any] | None:
+        """Check if an addon is installed by its provider-specific ID."""
+        for addon in self.config['Addons']:
+            if addon.get('ProviderId') == provider_id:
                 return addon
         return None
 
@@ -303,6 +317,68 @@ class Core:
                 return provider.name, provider.get_website_url(url)
         return '?', None
 
+    def _resolve_dependencies(
+        self, url: str, visited: set[Any] | None = None
+    ) -> tuple[list[tuple[str, str, Any]], set[Any]]:
+        """
+        Recursively resolve all required dependencies for an addon.
+        Returns (dependencies_list, all_provider_ids).
+        Raises RuntimeError on circular dependencies or missing deps.
+
+        This method is provider-agnostic - it delegates to the provider's get_dependencies() method.
+        """
+        if visited is None:
+            visited = set()
+
+        # Identify which provider handles this URL
+        provider = None
+        for p in self.providers:
+            if p.is_addon_url(url):
+                provider = p
+                break
+
+        if not provider:
+            return [], set()
+
+        # Get addon instance to extract provider ID
+        addon = self.parse_url(url)
+
+        # Check if provider ID exists (None for providers without IDs)
+        if addon.providerId is None:
+            return [], set()
+
+        # Detect circular dependencies
+        if addon.providerId in visited:
+            raise RuntimeError(f'{addon.name}.\nCircular dependency detected.')
+
+        visited.add(addon.providerId)
+        all_dependencies: list[tuple[str, str, Any]] = []
+        all_provider_ids = {addon.providerId}
+
+        # Get dependencies from provider (returns empty list if not supported)
+        dependencies = provider.get_dependencies(url)
+
+        # Process each dependency
+        for dep_url, dep_name, dep_provider_id in dependencies:
+            # Skip if already installed
+            if self.check_if_installed_by_provider_id(dep_provider_id):
+                all_provider_ids.add(dep_provider_id)
+                continue
+
+            # Recursively resolve nested dependencies
+            try:
+                nested_deps, nested_ids = self._resolve_dependencies(dep_url, visited.copy())
+
+                # Add nested deps first (install order), then this dep
+                all_dependencies.extend(nested_deps)
+                all_dependencies.append((dep_url, dep_name, dep_provider_id))
+                all_provider_ids.add(dep_provider_id)
+                all_provider_ids.update(nested_ids)
+            except Exception as e:
+                raise RuntimeError(f'{addon.name}.\nFailed to resolve dependency: {e!s}') from e
+
+        return all_dependencies, all_provider_ids
+
     def parse_new_addon(self, ignore: bool, url: str) -> tuple[bool, str, str]:
         if ignore:
             self.config['IgnoreClientVersion'][url] = True
@@ -322,36 +398,131 @@ class Core:
                                       'URL': url,
                                       'Version': new.currentVersion,
                                       'Directories': new.directories,
-                                      'Checksums': checksums})
+                                      'Checksums': checksums,
+                                      'ProviderId': new.providerId,
+                                      'RequiredBy': [],
+                                      'InstalledAsDependency': False})
         self.save_config()
         return True, new.name, new.currentVersion or ""
 
-    def add_addon(self, url: str, ignore: bool) -> tuple[bool, str, str]:
+    def add_addon_with_dependencies(
+        self, url: str, ignore: bool, confirm_callback: Any = None
+    ) -> tuple[bool, str, str, list[str]]:
+        """
+        Add addon with dependency resolution, confirmation, and rollback.
+        Returns (installed, name, version, installed_dependencies).
+        """
+        # Normalize URL (same logic as add_addon)
         if url.endswith(':'):
             raise NotImplementedError('Provided URL is not supported.')
-
-        # Handle wago-app:// protocol
         if 'wago-app://' in url:
             url = parse_wagoapp_payload(url, self.clientType, self.config['WAAAPIKey'], self.http)
-
-        # Handle shorthand URLs using providers
         for provider in self.providers:
             if provider.prefix and url.startswith(f'{provider.prefix}:'):
                 identifier = url[len(provider.prefix)+1:]
                 url = provider.convert_id_to_url(identifier)
                 break
-
-        # Normalize URL
         if url.endswith('/'):
             url = url[:-1]
 
+        # Check if already installed
         if addon := self.check_if_installed(url):
-            return False, addon['Name'], addon['Version']
-        else:
-            return self.parse_new_addon(ignore, url)
+            return False, addon['Name'], addon['Version'], []
 
-    def del_addon(self, url: str, keep: bool) -> tuple[str | None, str | None]:
+        # Resolve dependencies
+        dependencies_to_install, _ = self._resolve_dependencies(url)
+
+        # Get user confirmation if callback provided
+        if dependencies_to_install and confirm_callback:
+            if not confirm_callback(dependencies_to_install):
+                raise RuntimeError('Installation cancelled by user.')
+
+        # Install dependencies first, with rollback on failure
+        installed_dep_names: list[str] = []
+        installed_dep_urls: list[str] = []
+        rollback_needed = False
+
+        try:
+            # Install each dependency
+            for dep_url, dep_name, dep_provider_id in dependencies_to_install:
+                try:
+                    installed, name, version = self.parse_new_addon(ignore, dep_url)
+                    if installed:
+                        # Mark as dependency and add metadata
+                        addon_record = self.check_if_installed(dep_url)
+                        if addon_record:
+                            addon_record['ProviderId'] = dep_provider_id
+                            addon_record['InstalledAsDependency'] = True
+                            addon_record['RequiredBy'] = [url]
+                            self.save_config()
+                            installed_dep_names.append(name)
+                            installed_dep_urls.append(dep_url)
+                except Exception as e:
+                    rollback_needed = True
+                    raise RuntimeError(f'Failed to install dependency {dep_name}: {e!s}') from e
+
+            # Install main addon
+            try:
+                installed, name, version = self.parse_new_addon(ignore, url)
+
+                if installed:
+                    addon_record = self.check_if_installed(url)
+                    if addon_record:
+                        # Get providerId from addon instance
+                        addon_instance = self.parse_url(url)
+                        addon_record['ProviderId'] = addon_instance.providerId
+                        addon_record['InstalledAsDependency'] = False
+                        addon_record['RequiredBy'] = []
+                        self.save_config()
+
+                        # Update RequiredBy for dependencies
+                        for dep_url, _, _ in dependencies_to_install:
+                            if dep_addon := self.check_if_installed(dep_url):
+                                if url not in dep_addon['RequiredBy']:
+                                    dep_addon['RequiredBy'].append(url)
+                        self.save_config()
+
+            except Exception as e:
+                rollback_needed = True
+                raise RuntimeError(f'Failed to install {url}: {e!s}') from e
+            else:
+                return installed, name, version, installed_dep_names
+        finally:
+            # Rollback on failure
+            if rollback_needed:
+                for dep_url in installed_dep_urls:
+                    try:
+                        self.del_addon(dep_url, keep=False)
+                    except Exception:
+                        pass  # Best effort rollback
+
+    def del_addon(self, url: str, keep: bool, force: bool = False) -> tuple[str | None, str | None, list[str]]:
+        """Delete addon with dependency checking. Returns (name, version, removed_dependencies)."""
         if old := self.check_if_installed(url):
+            # Check if required by other addons
+            if not force and old.get('RequiredBy'):
+                required_by_names: list[str] = []
+                for dep_url in old['RequiredBy']:
+                    if dep_addon := self.check_if_installed(dep_url):
+                        required_by_names.append(dep_addon['Name'])
+
+                if required_by_names:
+                    raise RuntimeError(
+                        f'{old["Name"]} is required by: {", ".join(required_by_names)}.\n'
+                        f'Remove those addons first, or use force delete.'
+                    )
+
+            # Clean up RequiredBy references in all addons
+            # Find all addons that this addon depends on and remove this URL from their RequiredBy lists
+            orphaned_deps: list[dict[str, Any]] = []
+            for addon in self.config['Addons']:
+                if old['URL'] in addon.get('RequiredBy', []):
+                    addon['RequiredBy'].remove(old['URL'])
+                    # Track dependencies that are now orphaned (auto-installed and no longer required)
+                    if addon.get('InstalledAsDependency') and not addon['RequiredBy']:
+                        orphaned_deps.append(addon)
+
+            # Original deletion logic
             if not keep:
                 self.cleanup(old['Directories'])
             self.config['IgnoreClientVersion'].pop(old['URL'], None)
@@ -365,8 +536,17 @@ class Core:
                     shutil.rmtree(clean_dir)
 
             self.save_config()
-            return old['Name'], old['Version']
-        return None, None
+
+            # Auto-remove orphaned dependencies and collect their names
+            removed_deps: list[str] = []
+            for dep in orphaned_deps:
+                dep_name, _, nested_deps = self.del_addon(dep['URL'], keep=False, force=True)
+                if dep_name:
+                    removed_deps.append(dep_name)
+                    removed_deps.extend(nested_deps)
+
+            return old['Name'], old['Version'], removed_deps
+        return None, None, []
 
     def update_addon(
         self, url: str, update: bool, force: bool
@@ -414,6 +594,7 @@ class Core:
             old['Version'] = new.currentVersion
             old['Directories'] = new.directories
             old['Checksums'] = checksums
+            old['ProviderId'] = new.providerId
             self.save_config()
 
             # Cleanup old ZIPs
