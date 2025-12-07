@@ -1160,32 +1160,38 @@ class TUI:
             self.console.print(f'[red]Error:[/red] {e!s}')
 
     def c_list_mods(self, args: str) -> None:
-        if not args:
-            self.console.print('[green]Usage:[/green]\n\t[green]list_mods [AddonName][/green]'
-                              '\n\tLists all mods for the specified addon.')
-            return
+        # Determine which addons to show
+        if args:
+            addon_name = args.strip()
+            if addon_name not in self.core.config.get('Mods', {}) or not self.core.config['Mods'][addon_name]:
+                self.console.print(f'No mods found for [bold white]{addon_name}[/bold white]')
+                return
+            addons_to_show = [addon_name]
+        else:
+            if not self.core.config.get('Mods'):
+                self.console.print('No mods found.')
+                return
+            addons_to_show = [name for name in sorted(self.core.config['Mods'].keys())
+                            if self.core.config['Mods'][name]]
 
-        addon_name = args.strip()
-
-        if addon_name not in self.core.config['Mods'] or not self.core.config['Mods'][addon_name]:
-            self.console.print(f'No mods found for [bold white]{addon_name}[/bold white]')
-            return
-
+        # Create table with all mods
         table = Table(box=box.SQUARE)
+        table.add_column('Addon', header_style='bold white')
         table.add_column('Status', header_style='bold white', no_wrap=True)
         table.add_column('Mod Name', header_style='bold white')
         table.add_column('Priority', header_style='bold white', justify='center')
         table.add_column('Base Version', header_style='bold white')
         table.add_column('Files', header_style='bold white', justify='right')
 
-        for mod_name, mod_data in sorted(self.core.config['Mods'][addon_name].items(),
-                                         key=lambda x: x[1].get('priority', 999)):
-            status = '[green]Enabled[/green]' if mod_data.get('enabled') else '[red]Disabled[/red]'
-            priority = str(mod_data.get('priority', '-'))
-            base_version = mod_data.get('baseVersion', '?')
-            file_count = len(mod_data.get('patches', {}))
+        for addon_name in addons_to_show:
+            for mod_name, mod_data in sorted(self.core.config['Mods'][addon_name].items(),
+                                             key=lambda x: x[1].get('priority', 999)):
+                status = '[green]✓[/green]' if mod_data.get('enabled') else '[red]✗[/red]'
+                priority = str(mod_data.get('priority', '-'))
+                base_version = mod_data.get('baseVersion', '?')
+                file_count = len(mod_data.get('patches', {}))
 
-            table.add_row(status, mod_name, priority, base_version, str(file_count))
+                table.add_row(addon_name, status, mod_name, priority, base_version, str(file_count))
 
         self.console.print(table)
 
