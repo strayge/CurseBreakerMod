@@ -1,8 +1,31 @@
-# CurseBreaker
+# CurseBreakerMod
 
 [<img src="https://img.shields.io/github/release/AcidWeb/CurseBreaker">](https://github.com/AcidWeb/CurseBreaker/releases/latest) [<img src="https://img.shields.io/github/downloads/AcidWeb/CurseBreaker/latest/total">](https://github.com/AcidWeb/CurseBreaker/releases/latest) [<img src="https://img.shields.io/github/downloads/AcidWeb/CurseBreaker/total">](https://github.com/AcidWeb/CurseBreaker/releases/latest) [<img src="https://img.shields.io/github/actions/workflow/status/AcidWeb/CurseBreaker/build.yml">](https://github.com/AcidWeb/CurseBreaker/actions) [<img src="https://img.shields.io/discord/362155557488164874?logo=discord">](https://discord.gg/G2SXFGb)
 
 TUI/CLI addon updater for World of Warcraft.
+
+## ABOUT THIS FORK
+This is an **fork** of the original CurseBreaker by AcidWeb. Key additions include:
+
+- **CurseForge Support**: CurseForge provider rewritten from scratch
+- **Mod Manager**: Create and maintain persistent patches to your addons that survive updates
+- **Smart Dependencies**: Automatic detection and installation of required addon dependencies
+
+## MOD MANAGER
+The **Mod Manager** allows you to maintain persistent modifications to addons that automatically reapply after updates:
+
+### Creating Mods
+1. Install an addon normally
+2. Modify the addon files manually (Lua and XML files)
+3. Run `create_mod AddonName ModName` to create a patch
+4. The mod is automatically reapplied when the addon updates
+
+### Managing Mods
+- `list_mods` - Show all created mods and their status
+- `toggle_mod AddonName` - Enable/disable a mod
+- `delete_mod AddonName ModName` - Remove a mod permanently
+
+## SCREENSHOT
 
 ![Screenshot](https://i.imgur.com/XI7vORk.png)
 
@@ -39,6 +62,12 @@ By default **CurseBreaker** will create backups of the entire `WTF` directory.
 - GitHub: Development versions of multiple addons. Slugs are suffixed with `:Dev`.
 - GitHub Releases: `https://github.com/[username]/[repository_name]`, `gh:[username]/[repository_name]`
 - Wago: **CurseBreaker** can update auras and Plater profiles/scripts like WeakAuras Companion.
+
+### How It Works
+- Clean addon ZIPs are backed up to `WTF/CurseBreakerClean/`
+- Modifications are stored as unified diff patches in your config
+- Patches are priority-ordered and automatically reapplied after updates
+- Perfect for maintaining custom UI tweaks, translations, or fixes
 
 ## WAGO ADDONS SUPPORT
 To use Wago Addons as addon source user needs to provide a personal API key. It is a paid feature.\
