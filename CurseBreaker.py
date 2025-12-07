@@ -493,8 +493,9 @@ class TUI:
         # Check if ANY of the addon's supported versions match current WoW versions
         uiversion_indicator = ''
         if uiversion:
-            current_versions = [v['CurrentVersion'] for _, v in self.core.masterConfig['ClientTypes'].items()]
-            if not any(v in current_versions for v in uiversion):
+            client_types = self.core.masterConfig['ClientTypes']
+            current_versions = [v['CurrentVersion'] for _, v in client_types.items()]
+            if client_types and not any(v in current_versions for v in uiversion):
                 uiversion_indicator = ' [bold yellow][!][/bold yellow]'
         if link:
             obj = Text.from_markup(f'[link={link}]{text}[/link]{dev_str}{authors_str}{uiversion_indicator}')
