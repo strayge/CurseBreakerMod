@@ -32,6 +32,7 @@ By default **CurseBreaker** will create backups of the entire `WTF` directory.
 - When the application is started with a `headless` parameter entire addon and Wago upgrade process plus WTF backup should be executed in the background. Log file _CurseBreaker.html_ will be created in the same directory as the application.
 
 ## SUPPORTED URL
+- CurseForge: `https://www.curseforge.com/wow/addons/[addon_name]`, `cf:[addon_name]`
 - Wago Addons: `https://addons.wago.io/addons/[addon_name]`, `wa:[addon_name]`
 - WoWInterface: `https://www.wowinterface.com/downloads/[addon_name]`, `wowi:[addon_id]`
 - Tukui: `ElvUI`, `Tukui`
