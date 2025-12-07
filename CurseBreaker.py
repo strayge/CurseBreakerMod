@@ -1216,16 +1216,13 @@ class TUI:
 
         # Reapply mods to addon
         try:
-            # Force update to clean state then reapply mods
-            addon = self.core.check_if_installed(addon_name)
-            if addon:
-                self.console.print('[yellow]Reapplying mods...[/yellow]')
-                # We need to reinstall from clean ZIP and reapply enabled mods
-                # For now, just show a message
-                msg = f'[yellow]Note:[/yellow] Run [green]update {addon_name}[/green] to apply changes'
-                self.console.print(msg)
+            self.console.print('[yellow]Reinstalling from clean backup...[/yellow]')
+            self.core.reinstall_from_clean_zip(addon_name)
+            self.console.print(
+                f'[green]✓[/green] Addon [bold white]{addon_name}[/bold white] reinstalled with mods applied'
+            )
         except Exception as e:
-            self.console.print(f'[yellow]Warning:[/yellow] {e!s}')
+            self.console.print(f'[red]Error:[/red] {e!s}')
 
     def c_delete_mod(self, args: str) -> None:
         if not args:

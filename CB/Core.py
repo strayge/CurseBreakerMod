@@ -288,6 +288,42 @@ class Core:
         if not list(clean_dir.glob('*')):
             clean_dir.rmdir()
 
+    def reinstall_from_clean_zip(self, addon_name: str) -> None:
+        """Reinstall addon from clean ZIP backup and reapply enabled mods"""
+        addon = self.check_if_installed(addon_name)
+        if not addon:
+            raise RuntimeError(f"Addon '{addon_name}' is not installed.")
+
+        # Check if clean ZIP exists
+        clean_zip = Path(f'{CLEAN_BACKUP_DIR}/{addon_name}/{addon["Version"]}.zip')
+        if not clean_zip.exists():
+            raise RuntimeError(
+                f"No clean version found for {addon_name} v{addon['Version']}.\n"
+                f"Run 'force_update {addon_name}' to reinstall cleanly first."
+            )
+
+        # Remove current addon directories
+        self.cleanup(addon['Directories'])
+
+        # Extract clean ZIP
+        with zipfile.ZipFile(clean_zip, 'r') as zf:
+            zf.extractall(self.path)
+
+        # Reapply enabled mods
+        if addon_name in self.config.get('Mods', {}):
+            failed_mods = self.mod_manager.reapply_all_mods(addon_name)
+            if failed_mods:
+                raise RuntimeError(
+                    f"Failed to apply mods: {', '.join(mod[0] for mod in failed_mods)}"
+                )
+
+        # Recalculate checksums
+        checksums = {}
+        for directory in addon['Directories']:
+            checksums[directory] = dirhash(self.path / directory)
+        addon['Checksums'] = checksums
+        self.save_config()
+
     def parse_url(self, url: str) -> BaseAddon:
         # Check for legacy/unsupported providers
         if url.startswith('https://www.townlong-yak.com/addons/'):
