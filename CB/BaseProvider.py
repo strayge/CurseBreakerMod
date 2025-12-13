@@ -147,6 +147,22 @@ class BaseAddonProvider(ABC):
         """
         return []
 
+    # ===== Search =====
+
+    def search(self, query: str, client_type: str) -> list[str]:
+        """
+        Search for addons matching a query.
+
+        Args:
+            query: Search term
+            client_type: Current game client type
+
+        Returns:
+            List of addon URLs matching the query.
+            Default implementation returns empty list (search not supported).
+        """
+        return []
+
     # ===== Export =====
 
     def url_to_shorthand(self, url: str) -> str:

@@ -1115,7 +1115,7 @@ class TUI:
             \tPrints list of orphaned directories and files.
 
             [green]search [Keyword][/green]
-            \tExecutes addon search on Wago Addons.
+            \tExecutes addon search across supported providers.
 
             [green]backup[/green]
             \tCommand creates a backup of WTF directory.

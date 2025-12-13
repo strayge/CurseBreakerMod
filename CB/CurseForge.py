@@ -6,6 +6,7 @@ import zipfile
 import concurrent.futures
 from typing import Any, final
 from pathlib import Path
+from urllib.parse import quote_plus
 from . import retry
 from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon
 
@@ -391,6 +392,36 @@ class CurseForgeProvider(BaseAddonProvider):
 
         # Batch fetch metadata for all dependencies
         return self.get_addon_by_provider_id(addon.requiredDepIds)
+
+    def search(self, query: str, client_type: str) -> list[str]:
+        """
+        Search for addons on CurseForge.
+
+        Args:
+            query: Search term
+            client_type: Current game client type
+
+        Returns:
+            List of addon URLs matching the query.
+        """
+        game_version_type_id = GAME_VERSION_TYPE_MAP.get(client_type)
+        if not game_version_type_id:
+            return []
+
+        try:
+            response = self.http.get(
+                f'https://api.curseforge.com/v1/mods/search?gameId=1'
+                f'&gameVersionTypeId={game_version_type_id}'
+                f'&searchFilter={quote_plus(query.strip())}',
+                headers={'x-api-key': CF_API_KEY},
+                timeout=15
+            )
+            if response.status_code != 200:
+                return []
+            data = response.json().get('data', [])
+            return [f"https://www.curseforge.com/wow/addons/{addon['slug']}" for addon in data]
+        except Exception:
+            return []
 
     def get_addon_by_provider_id(self, provider_ids: list[int]) -> list[tuple[str, str, int]]:
         """

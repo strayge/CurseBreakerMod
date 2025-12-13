@@ -12,12 +12,11 @@ import concurrent.futures
 from pathlib import Path
 from collections import Counter
 from checksumdir import dirhash
-from urllib.parse import quote_plus
 from rich.progress import Progress, BarColumn
 from typing import Any
-from . import APIAuth, __version__
+from . import __version__
 from .BaseProvider import BaseAddon, BaseAddonProvider
-from .WagoAddons import parse_wagoapp_payload, parse_wagoaddons_error
+from .WagoAddons import parse_wagoapp_payload
 from .ModManager import CLEAN_BACKUP_DIR, ModManager
 from .CurseForge import CurseForgeProvider
 from .WagoAddons import WagoAddonsProvider
@@ -757,15 +756,13 @@ class Core:
         return orphanedaddon, orphaneconfig
 
     def search(self, query: str) -> list[str]:
-        if self.config['WAAAPIKey'] == '':
-            raise RuntimeError('This feature only searches the database of the Wago Addons. '
-                               'So their API key is required.\n'
-                               'It can be obtained here: https://addons.wago.io/patreon')
-        payload = self.http.get(f'https://addons.wago.io/api/external/addons/_search?query={quote_plus(query.strip())}&'
-                                f'game_version={self.clientType}', auth=APIAuth('Bearer', self.config['WAAAPIKey']))
-        parse_wagoaddons_error(payload.status_code)
-        payload = payload.json()
-        return [result['website_url'] for result in payload['data']]
+        """Search for addons across all providers that support search."""
+        if not self.clientType:
+            return []
+        results: list[str] = []
+        for provider in self.providers:
+            results.extend(provider.search(query, self.clientType))
+        return results
 
     def create_reg(self) -> None:
         with open('CurseBreaker.reg', 'w') as outfile:
