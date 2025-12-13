@@ -15,7 +15,7 @@ from checksumdir import dirhash
 from rich.progress import Progress, BarColumn
 from typing import Any
 from . import __version__
-from .BaseProvider import BaseAddon, BaseAddonProvider
+from .BaseProvider import BaseAddon, BaseAddonProvider, SearchResult
 from .WagoAddons import parse_wagoapp_payload
 from .ModManager import CLEAN_BACKUP_DIR, ModManager
 from .CurseForge import CurseForgeProvider
@@ -755,11 +755,11 @@ class Core:
                         orphaneconfig.append(str(Path(root, f))[4:])
         return orphanedaddon, orphaneconfig
 
-    def search(self, query: str) -> list[str]:
+    def search(self, query: str) -> list[SearchResult]:
         """Search for addons across all providers that support search."""
         if not self.clientType:
             return []
-        results: list[str] = []
+        results: list[SearchResult] = []
         for provider in self.providers:
             results.extend(provider.search(query, self.clientType))
         return results

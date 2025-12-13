@@ -16,6 +16,15 @@ class DetectedAddon:
     is_installed: bool
 
 
+@dataclass
+class SearchResult:
+    """Represents a search result from a provider."""
+    name: str
+    url: str
+    source: str
+    summary: str = ''
+
+
 class BaseAddon(ABC):
     """Base class for all addon implementations."""
 
@@ -149,7 +158,7 @@ class BaseAddonProvider(ABC):
 
     # ===== Search =====
 
-    def search(self, query: str, client_type: str) -> list[str]:
+    def search(self, query: str, client_type: str) -> list[SearchResult]:
         """
         Search for addons matching a query.
 
@@ -158,7 +167,7 @@ class BaseAddonProvider(ABC):
             client_type: Current game client type
 
         Returns:
-            List of addon URLs matching the query.
+            List of SearchResult objects.
             Default implementation returns empty list (search not supported).
         """
         return []

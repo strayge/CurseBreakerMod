@@ -8,7 +8,7 @@ from typing import Any, final
 from pathlib import Path
 from urllib.parse import quote_plus
 from . import retry
-from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon
+from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon, SearchResult
 
 CF_API_KEY = '$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm'
 GAME_VERSION_TYPE_MAP = {'retail': 517, 'classic': 67408, 'mop': 79434}
@@ -393,7 +393,7 @@ class CurseForgeProvider(BaseAddonProvider):
         # Batch fetch metadata for all dependencies
         return self.get_addon_by_provider_id(addon.requiredDepIds)
 
-    def search(self, query: str, client_type: str) -> list[str]:
+    def search(self, query: str, client_type: str) -> list[SearchResult]:
         """
         Search for addons on CurseForge.
 
@@ -402,26 +402,39 @@ class CurseForgeProvider(BaseAddonProvider):
             client_type: Current game client type
 
         Returns:
-            List of addon URLs matching the query.
+            List of SearchResult objects.
         """
         game_version_type_id = GAME_VERSION_TYPE_MAP.get(client_type)
         if not game_version_type_id:
             return []
 
+        results: list[SearchResult] = []
         try:
             response = self.http.get(
                 f'https://api.curseforge.com/v1/mods/search?gameId=1'
                 f'&gameVersionTypeId={game_version_type_id}'
+                f'&sortField=2&sortOrder=desc&pageSize=10'
                 f'&searchFilter={quote_plus(query.strip())}',
                 headers={'x-api-key': CF_API_KEY},
                 timeout=15
             )
             if response.status_code != 200:
-                return []
+                return results
             data = response.json().get('data', [])
-            return [f"https://www.curseforge.com/wow/addons/{addon['slug']}" for addon in data]
+            summary_limit = 100
+            for addon in data:
+                summary = addon.get('summary', '')
+                if len(summary) > summary_limit:
+                    summary = summary[:summary_limit - 3] + '...'
+                results.append(SearchResult(
+                    name=addon['name'],
+                    url=f"https://www.curseforge.com/wow/addons/{addon['slug']}",
+                    source='CF',
+                    summary=summary
+                ))
         except Exception:
-            return []
+            pass
+        return results
 
     def get_addon_by_provider_id(self, provider_ids: list[int]) -> list[tuple[str, str, int]]:
         """

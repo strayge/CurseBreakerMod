@@ -1049,11 +1049,12 @@ class TUI:
             return
         results = self.core.search(args)
         self.console.print('[green]Top results of your search:[/green]')
-        for url in results:
-            if self.core.check_if_installed(url):
-                self.console.print(f'[link={url}]{url}[/link] [yellow][Installed][/yellow]', highlight=False)
-            else:
-                self.console.print(f'[link={url}]{url}[/link]', highlight=False)
+        for result in results:
+            installed = ' [yellow][Installed][/yellow]' if self.core.check_if_installed(result.url) else ''
+            self.console.print(f'[cyan]{result.name}[/cyan]{installed}', highlight=False)
+            if result.summary:
+                self.console.print(f'    {result.summary}', highlight=False)
+            self.console.print(f'    [link={result.url}]{result.url}[/link]', highlight=False)
 
     def c_backup(self, _: str) -> None:
         self.core.backup_wtf(None if self.headless else self.console)

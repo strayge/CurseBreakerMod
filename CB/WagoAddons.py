@@ -12,7 +12,7 @@ from dateutil.tz import tzutc
 from json import JSONDecodeError
 from urllib.parse import quote_plus
 from . import retry, APIAuth
-from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon
+from .BaseProvider import BaseAddon, BaseAddonProvider, DetectedAddon, SearchResult
 
 
 def parse_wagoaddons_error(code: int) -> None:
@@ -264,7 +264,7 @@ class WagoAddonsProvider(BaseAddonProvider):
         except Exception:
             pass
 
-    def search(self, query: str, client_type: str) -> list[str]:
+    def search(self, query: str, client_type: str) -> list[SearchResult]:
         """
         Search for addons on Wago Addons.
 
@@ -273,11 +273,12 @@ class WagoAddonsProvider(BaseAddonProvider):
             client_type: Current game client type
 
         Returns:
-            List of addon URLs matching the query.
+            List of SearchResult objects.
         """
         if not self.config['WAAAPIKey']:
             return []
 
+        results: list[SearchResult] = []
         try:
             payload = self.http.get(
                 f'https://addons.wago.io/api/external/addons/_search?query={quote_plus(query.strip())}&'
@@ -286,9 +287,17 @@ class WagoAddonsProvider(BaseAddonProvider):
             )
             parse_wagoaddons_error(payload.status_code)
             data = payload.json()
-            return [result['website_url'] for result in data.get('data', [])]
+            for result in data.get('data', []):
+                url = result['website_url']
+                name = url.rstrip('/').split('/')[-1]
+                results.append(SearchResult(
+                    name=name,
+                    url=url,
+                    source='Wago'
+                ))
         except Exception:
-            return []
+            pass
+        return results
 
     def scan(self, addon_dirs: list[str], path: Path, client_type: str) -> list[DetectedAddon]:
         """Scan directories for Wago Addons using hash matching."""
