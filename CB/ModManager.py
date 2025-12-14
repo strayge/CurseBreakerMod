@@ -44,43 +44,24 @@ class ModManager:
 
             # Apply existing enabled mods to expected
             enabled_mods = self._get_enabled_mods(addon_name)
-            if enabled_mods:
-                for _mod_name, mod_data in enabled_mods:
-                    for file_path, patch_content in mod_data['patches'].items():
-                        target_file = expected_path / file_path
-                        if target_file.exists():
-                            try:
-                                self._apply_patch(target_file, patch_content)
-                            except Exception:
-                                pass  # Silently skip failed patches
+            for _mod_name, mod_data in enabled_mods:
+                self._apply_mod(expected_path, mod_data, raise_on_error=False)
 
             # 6. Generate diffs between expected and current
             current_path = Path('Interface/AddOns')
-            patches = {}
-
-            for directory in addon['Directories']:
-                dir_path = current_path / directory
-                if not dir_path.exists():
-                    continue
-
-                for file_path in self._get_lua_xml_files(dir_path):
-                    rel_path = file_path.relative_to(current_path)
-                    expected_file = expected_path / rel_path
-
-                    if expected_file.exists():
-                        diff = self._generate_diff(expected_file, file_path, addon['Version'])
-                        if diff:
-                            patches[str(rel_path)] = diff
+            patches, added, removed = self._compare_directories(
+                expected_path, current_path, addon['Directories'], addon['Version']
+            )
 
             # 7. Validate we found changes
-            if not patches:
+            if not patches and not added and not removed:
                 raise RuntimeError("No modifications detected. Edit files before creating mod.")
 
         finally:
             # 8. Always cleanup temp directory
             shutil.rmtree(temp_base, ignore_errors=True)
 
-        # 8. Save mod to config
+        # 9. Save mod to config
         if addon_name not in self.core.config['Mods']:
             self.core.config['Mods'][addon_name] = {}
 
@@ -91,11 +72,13 @@ class ModManager:
             'enabled': True,
             'priority': self._get_next_priority(addon_name),
             'baseVersion': addon['Version'],
-            'patches': patches
+            'patches': patches,
+            'added': added,
+            'removed': removed
         }
 
         self.core.save_config()
-        return len(patches)
+        return len(patches) + len(added) + len(removed)
 
     def _get_enabled_mods(self, addon_name: str) -> list[tuple[str, dict[str, Any]]]:
         """Get enabled mods for an addon, sorted by priority"""
@@ -108,6 +91,95 @@ class ModManager:
         ]
         enabled_mods.sort(key=lambda x: x[1].get('priority', 999))
         return enabled_mods
+
+    def _apply_mod(self, base_path: Path, mod_data: dict[str, Any], raise_on_error: bool = True) -> None:
+        """Apply a single mod's changes to the specified base path.
+
+        Args:
+            base_path: The directory to apply changes to (e.g., Interface/AddOns or temp dir)
+            mod_data: The mod configuration containing patches, added, and removed
+            raise_on_error: If True, raise exceptions on failure. If False, silently skip failures.
+        """
+        # Apply patches to modified files
+        for file_path, patch_content in mod_data.get('patches', {}).items():
+            target_file = base_path / file_path
+            if target_file.exists():
+                try:
+                    self._apply_patch(target_file, patch_content)
+                except Exception:
+                    if raise_on_error:
+                        raise
+
+        # Create added files
+        for file_path, file_content in mod_data.get('added', {}).items():
+            target_file = base_path / file_path
+            try:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(target_file, 'w', encoding='utf-8') as f:
+                    f.write(file_content)
+            except Exception:
+                if raise_on_error:
+                    raise
+
+        # Remove deleted files
+        for file_path in mod_data.get('removed', []):
+            target_file = base_path / file_path
+            try:
+                if target_file.exists():
+                    target_file.unlink()
+            except Exception:
+                if raise_on_error:
+                    raise
+
+    def _compare_directories(
+        self, expected_path: Path, current_path: Path, directories: list[str], version: str
+    ) -> tuple[dict[str, str], dict[str, str], list[str]]:
+        """Compare files between expected and current directories.
+
+        Returns:
+            patches: dict of file path -> unified diff for modified files
+            added: dict of file path -> full content for new files
+            removed: list of file paths that were deleted
+        """
+        patches: dict[str, str] = {}
+        added: dict[str, str] = {}
+        removed: list[str] = []
+
+        for directory in directories:
+            current_dir = current_path / directory
+            expected_dir = expected_path / directory
+
+            # Collect all lua/xml files from both directories
+            current_files: set[Path] = set()
+            expected_files: set[Path] = set()
+
+            if current_dir.exists():
+                for file_path in self._get_lua_xml_files(current_dir):
+                    current_files.add(file_path.relative_to(current_path))
+
+            if expected_dir.exists():
+                for file_path in self._get_lua_xml_files(expected_dir):
+                    expected_files.add(file_path.relative_to(expected_path))
+
+            # Files in both: check for modifications
+            for rel_path in current_files & expected_files:
+                diff = self._generate_diff(expected_path / rel_path, current_path / rel_path, version)
+                if diff:
+                    patches[str(rel_path)] = diff
+
+            # Files only in current: added files
+            for rel_path in current_files - expected_files:
+                try:
+                    with open(current_path / rel_path, encoding='utf-8', errors='ignore') as f:
+                        added[str(rel_path)] = f.read()
+                except Exception:
+                    pass
+
+            # Files only in expected: removed files
+            for rel_path in expected_files - current_files:
+                removed.append(str(rel_path))
+
+        return patches, added, removed
 
     def _generate_diff(self, expected_file: Path, current_file: Path, version: str) -> str | None:
         """Generate unified diff between two files"""
@@ -213,10 +285,7 @@ class ModManager:
 
         for mod_name, mod_data in enabled_mods:
             try:
-                for file_path, patch_content in mod_data['patches'].items():
-                    target_file = current_path / file_path
-                    if target_file.exists():
-                        self._apply_patch(target_file, patch_content)
+                self._apply_mod(current_path, mod_data, raise_on_error=True)
             except Exception as e:
                 # Disable failed mod
                 mod_data['enabled'] = False
