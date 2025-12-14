@@ -235,7 +235,7 @@ class ModManager:
         result_lines = original_lines.copy()
 
         for hunk in reversed(hunks):
-            old_line_idx = hunk['old_start'] - 1
+            old_line_idx = max(0, hunk['old_start'] - 1)
             current_idx = old_line_idx
 
             for line in hunk['lines']:
