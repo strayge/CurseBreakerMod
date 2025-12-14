@@ -165,19 +165,19 @@ class ModManager:
             for rel_path in current_files & expected_files:
                 diff = self._generate_diff(expected_path / rel_path, current_path / rel_path, version)
                 if diff:
-                    patches[str(rel_path)] = diff
+                    patches[rel_path.as_posix()] = diff
 
             # Files only in current: added files
             for rel_path in current_files - expected_files:
                 try:
                     with open(current_path / rel_path, encoding='utf-8', errors='ignore') as f:
-                        added[str(rel_path)] = f.read()
+                        added[rel_path.as_posix()] = f.read()
                 except Exception:
                     pass
 
             # Files only in expected: removed files
             for rel_path in expected_files - current_files:
-                removed.append(str(rel_path))
+                removed.append(rel_path.as_posix())
 
         return patches, added, removed
 
