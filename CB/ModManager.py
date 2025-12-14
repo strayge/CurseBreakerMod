@@ -103,12 +103,15 @@ class ModManager:
         # Apply patches to modified files
         for file_path, patch_content in mod_data.get('patches', {}).items():
             target_file = base_path / file_path
-            if target_file.exists():
-                try:
-                    self._apply_patch(target_file, patch_content)
-                except Exception:
-                    if raise_on_error:
-                        raise
+            if not target_file.exists():
+                if raise_on_error:
+                    raise RuntimeError(f'File {file_path} not found. The file may have been removed.')
+                continue
+            try:
+                self._apply_patch(target_file, patch_content)
+            except Exception:
+                if raise_on_error:
+                    raise
 
         # Create added files
         for file_path, file_content in mod_data.get('added', {}).items():

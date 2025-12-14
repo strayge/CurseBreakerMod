@@ -417,3 +417,72 @@ def test_apply_mod_fails_when_target_code_removed(mod_manager: ModManager, temp_
     # Step 3: Apply the mod - should fail since target code was removed
     with pytest.raises(RuntimeError, match='Could not find matching context'):
         mod_manager._apply_mod(updated_path, mod_data)
+
+
+def test_apply_mod_fails_when_file_removed(mod_manager: ModManager, temp_dir: Path):
+    """
+    Test that mod application fails when the file being patched has been removed.
+
+    Scenario:
+    1. Original addon v1.0 has core.lua
+    2. User creates mod changing a line in core.lua
+    3. Addon updates to v2.0, completely removing core.lua
+    4. Mod should fail to apply since the file no longer exists
+    """
+    # Original file (v1.0)
+    original_v1 = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.debug = false
+        end
+
+        return MyAddon
+        ''')
+
+    # User's modified version
+    user_modified = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.debug = true
+        end
+
+        return MyAddon
+        ''')
+
+    # Step 1: Create mod by comparing original v1 with user modified version
+    original_path = temp_dir / 'original_v1'
+    modified_path = temp_dir / 'modified'
+
+    for path, content in [('MyAddon/core.lua', original_v1)]:
+        file_path = original_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    for path, content in [('MyAddon/core.lua', user_modified)]:
+        file_path = modified_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    patches, added, removed = mod_manager._compare_directories(
+        original_path, modified_path, ['MyAddon'], '1.0.0'
+    )
+    mod_data = {'patches': patches, 'added': added, 'removed': removed}
+
+    # Verify mod was created
+    assert 'MyAddon/core.lua' in patches, 'Patch should be created for modified file'
+
+    # Step 2: Create updated v2 directory WITHOUT core.lua (file removed)
+    updated_path = temp_dir / 'updated_v2'
+    updated_path.mkdir(parents=True, exist_ok=True)
+    # Create a different file so the addon directory exists
+    other_file = updated_path / 'MyAddon' / 'main.lua'
+    other_file.parent.mkdir(parents=True, exist_ok=True)
+    other_file.write_text('-- New main file\n')
+
+    # Step 3: Apply the mod - should fail since the file was removed
+    with pytest.raises(RuntimeError, match=r'File .* not found'):
+        mod_manager._apply_mod(updated_path, mod_data)
