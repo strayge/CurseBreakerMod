@@ -206,3 +206,214 @@ def test_realistic_lua_changes(mod_manager: ModManager, temp_dir: Path):
         initial_files={'MyAddon/core.lua': original},
         expected_files={'MyAddon/core.lua': modified},
     )
+
+
+def test_apply_mod_to_updated_file_with_shifted_lines(mod_manager: ModManager, temp_dir: Path):
+    """
+    Test applying a mod to an updated file where target lines have shifted.
+
+    Scenario:
+    1. Original addon v1.0 has a function at lines 5-10
+    2. User creates mod changing line 7
+    3. Addon updates to v2.0, adding new code at top - function now at lines 15-20
+    4. Mod should still apply correctly to the shifted location
+    """
+    # Original file (v1.0) - the version mod was created against
+    original_v1 = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = false
+        end
+
+        return MyAddon
+        ''')
+
+    # User's modified version (mod changes debug to true)
+    user_modified = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = true
+        end
+
+        return MyAddon
+        ''')
+
+    # Updated file (v2.0) - new code added at top, shifting the function down
+    updated_v2 = dedent('''\
+        -- MyAddon v2.0
+        -- New features in this version!
+        local MyAddon = {}
+
+        -- New configuration system
+        local defaults = {
+            scale = 1.0,
+            alpha = 0.8,
+        }
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = false
+        end
+
+        function MyAddon:ApplyDefaults()
+            for k, v in pairs(defaults) do
+                self[k] = v
+            end
+        end
+
+        return MyAddon
+        ''')
+
+    # Expected result: v2.0 with the user's mod applied (debug = true)
+    expected_result = dedent('''\
+        -- MyAddon v2.0
+        -- New features in this version!
+        local MyAddon = {}
+
+        -- New configuration system
+        local defaults = {
+            scale = 1.0,
+            alpha = 0.8,
+        }
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = true
+        end
+
+        function MyAddon:ApplyDefaults()
+            for k, v in pairs(defaults) do
+                self[k] = v
+            end
+        end
+
+        return MyAddon
+        ''')
+
+    # Step 1: Create mod by comparing original v1 with user modified version
+    original_path = temp_dir / 'original_v1'
+    modified_path = temp_dir / 'modified'
+
+    for path, content in [('MyAddon/core.lua', original_v1)]:
+        file_path = original_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    for path, content in [('MyAddon/core.lua', user_modified)]:
+        file_path = modified_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    patches, added, removed = mod_manager._compare_directories(
+        original_path, modified_path, ['MyAddon'], '1.0.0'
+    )
+    mod_data = {'patches': patches, 'added': added, 'removed': removed}
+
+    # Verify mod was created
+    assert 'MyAddon/core.lua' in patches, 'Patch should be created for modified file'
+
+    # Step 2: Create updated v2 directory (simulating addon update)
+    updated_path = temp_dir / 'updated_v2'
+    for path, content in [('MyAddon/core.lua', updated_v2)]:
+        file_path = updated_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    # Step 3: Apply the mod created against v1 to the updated v2 file
+    mod_manager._apply_mod(updated_path, mod_data)
+
+    # Step 4: Verify the mod was applied correctly despite line number changes
+    result_file = updated_path / 'MyAddon/core.lua'
+    assert result_file.exists(), 'File should exist after mod application'
+    assert result_file.read_text() == expected_result, (
+        'Mod should apply correctly to updated file with shifted line numbers'
+    )
+
+
+def test_apply_mod_fails_when_target_code_removed(mod_manager: ModManager, temp_dir: Path):
+    """
+    Test that mod application fails when the code being modified has been removed.
+
+    Scenario:
+    1. Original addon v1.0 has a function MyAddon:Init()
+    2. User creates mod changing a line in that function
+    3. Addon updates to v2.0, completely removing the Init() function
+    4. Mod should fail to apply since the target code no longer exists
+    """
+    # Original file (v1.0) - the version mod was created against
+    original_v1 = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = false
+        end
+
+        return MyAddon
+        ''')
+
+    # User's modified version (mod changes debug to true)
+    user_modified = dedent('''\
+        -- MyAddon v1.0
+        local MyAddon = {}
+
+        function MyAddon:Init()
+            self.enabled = true
+            self.debug = true
+        end
+
+        return MyAddon
+        ''')
+
+    # Updated file (v2.0) - Init() function completely removed
+    updated_v2 = dedent('''\
+        -- MyAddon v2.0
+        -- Complete rewrite!
+        local MyAddon = {}
+
+        function MyAddon:NewAPI()
+            self.version = 2
+        end
+
+        return MyAddon
+        ''')
+
+    # Step 1: Create mod by comparing original v1 with user modified version
+    original_path = temp_dir / 'original_v1'
+    modified_path = temp_dir / 'modified'
+
+    for path, content in [('MyAddon/core.lua', original_v1)]:
+        file_path = original_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    for path, content in [('MyAddon/core.lua', user_modified)]:
+        file_path = modified_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    patches, added, removed = mod_manager._compare_directories(
+        original_path, modified_path, ['MyAddon'], '1.0.0'
+    )
+    mod_data = {'patches': patches, 'added': added, 'removed': removed}
+
+    # Verify mod was created
+    assert 'MyAddon/core.lua' in patches, 'Patch should be created for modified file'
+
+    # Step 2: Create updated v2 directory (simulating addon update with removed code)
+    updated_path = temp_dir / 'updated_v2'
+    for path, content in [('MyAddon/core.lua', updated_v2)]:
+        file_path = updated_path / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+
+    # Step 3: Apply the mod - should fail since target code was removed
+    with pytest.raises(RuntimeError, match='Could not find matching context'):
+        mod_manager._apply_mod(updated_path, mod_data)

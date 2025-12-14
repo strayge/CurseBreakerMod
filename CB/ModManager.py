@@ -202,8 +202,7 @@ class ModManager:
             return None
 
     def _apply_patch(self, target_file: Path, patch_content: str) -> None:
-        """Apply unified diff patch to file"""
-        # Simple patch application - parse and apply unified diff
+        """Apply unified diff patch to file with context-aware matching"""
         with open(target_file, encoding='utf-8', errors='ignore') as f:
             original_lines = f.readlines()
 
@@ -235,13 +234,15 @@ class ModManager:
         result_lines = original_lines.copy()
 
         for hunk in reversed(hunks):
-            old_line_idx = max(0, hunk['old_start'] - 1)
-            current_idx = old_line_idx
+            # Find the actual position using context-aware matching
+            actual_start = self._find_hunk_position(result_lines, hunk)
+            current_idx = actual_start
 
             for line in hunk['lines']:
                 if line.startswith('-'):
                     # Remove line from result
-                    del result_lines[current_idx]
+                    if current_idx < len(result_lines):
+                        del result_lines[current_idx]
                 elif line.startswith('+'):
                     # Insert new line
                     new_content = line[1:]
@@ -256,6 +257,89 @@ class ModManager:
         # Write patched content
         with open(target_file, 'w', encoding='utf-8', errors='ignore') as f:
             f.writelines(result_lines)
+
+    def _find_hunk_position(self, lines: list[str], hunk: dict[str, Any]) -> int:
+        """Find the actual position in file where hunk should be applied.
+
+        Uses context lines from the hunk to find the correct position,
+        allowing patches to work even when line numbers have shifted.
+        """
+        # Normalize lines for comparison
+        def normalize(s: str) -> str:
+            return s.rstrip('\n')
+
+        # Build a list of (type, content) for context/removed lines with their positions
+        # We need to find where in the target file the changes should be applied
+        hunk_entries: list[tuple[str, str]] = []  # (type: ' ' or '-', normalized content)
+        for line in hunk['lines']:
+            if line.startswith(' '):
+                hunk_entries.append((' ', normalize(line[1:])))
+            elif line.startswith('-'):
+                hunk_entries.append(('-', normalize(line[1:])))
+
+        if not hunk_entries:
+            return max(0, hunk['old_start'] - 1)
+
+        # Find the index of the first '-' line in hunk_entries
+        first_change_idx = None
+        for i, (typ, _) in enumerate(hunk_entries):
+            if typ == '-':
+                first_change_idx = i
+                break
+
+        if first_change_idx is None:
+            # No removed lines - this is a pure addition, use context to find position
+            first_change_idx = 0
+
+        # Extract lines to match: context before first change + the changed lines
+        # We'll use up to 2 context lines before the change plus the changed lines
+        context_before_count = min(first_change_idx, 2)
+        start_idx = first_change_idx - context_before_count
+
+        # Collect the core lines to match (context before + removed lines)
+        core_lines: list[str] = []
+        for i in range(start_idx, len(hunk_entries)):
+            typ, content = hunk_entries[i]
+            core_lines.append(content)
+            # Stop after we've collected all the '-' lines plus one context after
+            if i > first_change_idx and typ == ' ':
+                break
+
+        if not core_lines:
+            return max(0, hunk['old_start'] - 1)
+
+        # Normalize target file lines
+        normalized_lines = [normalize(line) for line in lines]
+
+        # Search for matching sequence in the file
+        # Start searching near the original position, expanding outward
+        original_pos = max(0, hunk['old_start'] - 1)
+        max_search_distance = len(lines) + 1
+
+        for offset in range(max_search_distance):
+            # Try position before and after original
+            for pos in [original_pos - offset, original_pos + offset]:
+                search_start = pos - context_before_count
+                if search_start < 0 or search_start + len(core_lines) > len(lines):
+                    continue
+
+                # Check if core lines match at this position
+                match = True
+                for i, exp_line in enumerate(core_lines):
+                    if normalized_lines[search_start + i] != exp_line:
+                        match = False
+                        break
+
+                if match:
+                    # Return the position where the hunk should start applying
+                    # (accounting for any leading context in the original hunk)
+                    return search_start + context_before_count - first_change_idx
+
+        # No match found - raise error
+        raise RuntimeError(
+            f'Could not find matching context for patch hunk at line {hunk["old_start"]}. '
+            'The target code may have been modified or removed.'
+        )
 
     def _get_lua_xml_files(self, directory: Path) -> Any:
         """Get all .lua and .xml files recursively"""
